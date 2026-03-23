@@ -43,7 +43,7 @@ def _parse_enabled_groups(raw) -> set:
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报",
-    "2.0.0",
+    "2.0.1",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
