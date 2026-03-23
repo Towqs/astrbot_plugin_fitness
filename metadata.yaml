@@ -1,0 +1,9 @@
+name: astrbot_plugin_fitness
+desc: "智能健身教练插件 - 个人档案建立、训练计划生成、每日打卡提醒、动态调整与补剂饮食跟进"
+author: "FitnessCoach"
+repo: ""
+version: "1.0.0"
+display_name: "智能健身教练"
+astrbot_version: ">=4.20.0"
+support_platforms:
+  - aiocqhttp

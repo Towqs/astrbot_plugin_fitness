@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+data/
+*.db
+tools.txt
+tools_p2.txt

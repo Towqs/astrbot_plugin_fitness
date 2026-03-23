@@ -1,0 +1,70 @@
+{
+  "enabled_groups": {
+    "description": "生效群白名单",
+    "type": "string",
+    "hint": "填写允许插件生效的QQ群号，多个群号用英文逗号分隔（如：123456,789012）。留空则所有群生效。",
+    "default": ""
+  },
+  "coach_persona": {
+    "description": "教练人格风格",
+    "type": "string",
+    "hint": "选择 AI 健身教练的人格风格",
+    "options": [
+      "热血教练 - 充满激情，像动漫里的热血导师",
+      "温柔姐姐 - 温柔体贴，耐心鼓励型",
+      "毒舌损友 - 嘴上不饶人但真心关心你",
+      "军训教官 - 严格纪律，不接受借口",
+      "游戏NPC - RPG风格浓厚，沉浸式角色扮演",
+      "自定义"
+    ],
+    "default": "热血教练 - 充满激情，像动漫里的热血导师"
+  },
+  "custom_persona": {
+    "description": "自定义人格描述",
+    "type": "string",
+    "hint": "当教练人格选择'自定义'时生效，填写你想要的教练人格描述",
+    "default": ""
+  },
+  "reminder_enabled": {
+    "description": "启用定时打卡提醒",
+    "type": "bool",
+    "hint": "开启后，插件会在用户设定的提醒时间自动发送打卡提醒到群里",
+    "default": true
+  },
+  "default_reminder_time": {
+    "description": "默认提醒时间",
+    "type": "string",
+    "hint": "新用户的默认打卡提醒时间，格式 HH:MM",
+    "default": "17:30"
+  },
+  "title_sync_enabled": {
+    "description": "启用群头衔同步",
+    "type": "bool",
+    "hint": "开启后，用户升级时自动修改群专属头衔（需要机器人是群主）",
+    "default": true
+  },
+  "random_event_enabled": {
+    "description": "启用随机事件",
+    "type": "bool",
+    "hint": "开启后，打卡时有概率触发暴击训练、宝箱掉落等随机事件",
+    "default": true
+  },
+  "extra_training_suggest": {
+    "description": "启用加练建议",
+    "type": "bool",
+    "hint": "开启后，AI 会根据用户打卡情况自主判断是否建议加练",
+    "default": true
+  },
+  "chat_provider_id": {
+    "description": "高成本 LLM 模型（对话/建档/计划）",
+    "type": "string",
+    "hint": "用于用户对话、建档引导、训练计划生成等需要高质量理解力的场景。填写 AstrBot 中配置的 LLM 提供商 ID（如 openai_chat_1），留空则使用默认模型。可在 WebUI「提供商管理」中查看 ID。",
+    "default": ""
+  },
+  "lite_provider_id": {
+    "description": "低成本 LLM 模型（提醒/检查/简单任务）",
+    "type": "string",
+    "hint": "用于生成个性化提醒消息、简单数据检查等不需要高质量的场景。建议配置便宜的模型以节省费用。留空则提醒使用纯模板（零成本），不走 AI。",
+    "default": ""
+  }
+}
