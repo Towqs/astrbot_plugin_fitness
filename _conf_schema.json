@@ -90,5 +90,17 @@
     "type": "bool",
     "hint": "开启后，用户可以通过自然语言记录饮食，AI 估算热量和蛋白质",
     "default": true
+  },
+  "proactive_reply_enabled": {
+    "description": "启用主动回复",
+    "type": "bool",
+    "hint": "开启后，教练会以一定概率主动回复群聊消息（需要已建档用户的消息才会触发）",
+    "default": false
+  },
+  "proactive_reply_probability": {
+    "description": "主动回复概率(%)",
+    "type": "int",
+    "hint": "教练主动回复的概率，范围 1-100。数值越大越话多，建议 5-15 比较自然。",
+    "default": 5
   }
 }

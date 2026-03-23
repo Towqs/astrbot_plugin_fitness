@@ -8,6 +8,7 @@
 - QQ群头衔同步
 """
 import json
+import random
 from datetime import date, timedelta
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -20,7 +21,7 @@ from astrbot import logger
 from . import database as db
 from .models import UserProfile, CheckinRecord, TrainingPlan, WeightRecord
 from .tools import set_qq_group_title, roll_random_event
-from .prompts import SYSTEM_PROMPT_FULL, PERSONA_PROMPTS
+from .prompts import SYSTEM_PROMPT_FULL, PERSONA_PROMPTS, PROACTIVE_REPLY_PROMPT
 from .reminder import ScheduledReminder
 from .rpg import calc_level, exp_for_next_level, get_title
 from .fatigue import FatigueAssessor
@@ -64,6 +65,8 @@ class FitnessCoachPlugin(Star):
         self.lite_provider_id = config.get("lite_provider_id", "")
         self.achievement_enabled = config.get("achievement_enabled", True)
         self.diet_log_enabled = config.get("diet_log_enabled", True)
+        self.proactive_reply_enabled = config.get("proactive_reply_enabled", False)
+        self.proactive_reply_probability = max(0, min(100, int(config.get("proactive_reply_probability", 5))))
 
         # AI 人格
         persona_choice = config.get("coach_persona", "热血教练 - 充满激情，像动漫里的热血导师")
@@ -968,6 +971,69 @@ class FitnessCoachPlugin(Star):
             )
 
         await event.send(event.plain_result(msg))
+
+    # ==================== 主动回复 ====================
+
+    @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
+    async def on_proactive_reply(self, event: AstrMessageEvent):
+        """以可配置概率主动回复群消息"""
+        if not self.proactive_reply_enabled:
+            return
+        if not self._is_group_enabled(event):
+            return
+
+        # 概率判定
+        if random.randint(1, 100) > self.proactive_reply_probability:
+            return
+
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+
+        # 忽略机器人自己的消息
+        if user_id == event.get_self_id():
+            return
+
+        # 获取消息文本
+        msg_text = event.message_str.strip() if event.message_str else ""
+        if not msg_text:
+            return
+
+        # 获取用户档案（有档案的用户才触发）
+        profile = db.get_profile(user_id, group_id)
+        if not profile or profile.onboarding_step != "complete":
+            return
+
+        nickname = profile.nickname or event.get_sender_name()
+
+        # 构建档案摘要
+        profile_info = (
+            f"健身目标: {profile.fitness_goal}, "
+            f"等级: Lv.{profile.level}, "
+            f"状态: {profile.current_status}"
+        )
+
+        persona_line = f"人格风格: {self.persona_prompt}" if self.persona_prompt else ""
+
+        prompt = PROACTIVE_REPLY_PROMPT.format(
+            message=msg_text[:200],
+            nickname=nickname,
+            profile_info=profile_info,
+            persona_line=persona_line,
+        )
+
+        # 用低成本模型生成回复
+        provider_id = self.lite_provider_id or self.chat_provider_id
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+            )
+            if resp and resp.completion_text:
+                reply = resp.completion_text.strip()
+                if reply:
+                    await event.send(event.plain_result(reply))
+        except Exception as e:
+            logger.debug(f"主动回复生成失败: {e}")
 
     # ==================== 手动指令 (备用) ====================
 
