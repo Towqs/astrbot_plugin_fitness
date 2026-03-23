@@ -3,7 +3,10 @@ import sqlite3
 import os
 from datetime import datetime, date, timedelta
 from typing import Optional
-from .models import UserProfile, CheckinRecord, TrainingPlan
+from .models import (
+    UserProfile, CheckinRecord, TrainingPlan,
+    UserPortrait, DietRecord, Achievement, TrainingCycle, WeightRecord
+)
 
 DB_DIR = os.path.join("data", "astrbot_plugin_fitness")
 DB_PATH = os.path.join(DB_DIR, "fitness.db")
@@ -92,6 +95,74 @@ def init_db():
                 created_at TEXT DEFAULT ''
             )
         """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS user_portraits (
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                weight_trend TEXT DEFAULT '',
+                training_preference TEXT DEFAULT '',
+                recovery_score INTEGER DEFAULT 50,
+                progress_speed TEXT DEFAULT 'normal',
+                fatigue_score INTEGER DEFAULT 0,
+                weekly_feedback TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
+                PRIMARY KEY (user_id, group_id)
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS diet_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                log_date TEXT NOT NULL,
+                meal_type TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                calories_est INTEGER DEFAULT 0,
+                protein_est REAL DEFAULT 0,
+                created_at TEXT DEFAULT ''
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS achievements (
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                achievement_id TEXT NOT NULL,
+                unlocked_at TEXT DEFAULT '',
+                PRIMARY KEY (user_id, group_id, achievement_id)
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS training_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                total_weeks INTEGER DEFAULT 4,
+                current_week INTEGER DEFAULT 1,
+                cycle_type TEXT DEFAULT '',
+                status TEXT DEFAULT 'active',
+                deload_week INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT ''
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS weight_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                record_date TEXT NOT NULL,
+                weight_kg REAL NOT NULL,
+                source TEXT DEFAULT 'manual',
+                created_at TEXT DEFAULT ''
+            )
+        """)
+
         conn.commit()
 
         # 数据库迁移：为旧表添加新字段（已存在则忽略）
@@ -367,5 +438,244 @@ def get_profiles_by_reminder_time(reminder_time: str) -> list:
             (reminder_time,)
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ========== 用户画像操作 ==========
+
+def save_portrait(p: UserPortrait):
+    now = datetime.now().isoformat()
+    p.updated_at = now
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO user_portraits (
+                user_id, group_id, weight_trend, training_preference,
+                recovery_score, progress_speed, fatigue_score,
+                weekly_feedback, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+        """, (
+            p.user_id, p.group_id, p.weight_trend, p.training_preference,
+            p.recovery_score, p.progress_speed, p.fatigue_score,
+            p.weekly_feedback, p.updated_at
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_portrait(user_id: str, group_id: str) -> Optional[UserPortrait]:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM user_portraits WHERE user_id=? AND group_id=?",
+            (user_id, group_id)
+        ).fetchone()
+        if not row:
+            return None
+        p = UserPortrait(user_id=row["user_id"], group_id=row["group_id"])
+        for f in ["weight_trend", "training_preference", "recovery_score",
+                  "progress_speed", "fatigue_score", "weekly_feedback", "updated_at"]:
+            setattr(p, f, row[f])
+        return p
+    finally:
+        conn.close()
+
+
+# ========== 饮食记录操作 ==========
+
+def add_diet_record(record: DietRecord):
+    record.created_at = datetime.now().isoformat()
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO diet_records (
+                user_id, group_id, log_date, meal_type,
+                description, calories_est, protein_est, created_at
+            ) VALUES (?,?,?,?,?,?,?,?)
+        """, (
+            record.user_id, record.group_id, record.log_date, record.meal_type,
+            record.description, record.calories_est, record.protein_est,
+            record.created_at
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_diet_records_by_date(user_id: str, group_id: str, log_date: str) -> list[DietRecord]:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM diet_records WHERE user_id=? AND group_id=? AND log_date=? ORDER BY created_at ASC",
+            (user_id, group_id, log_date)
+        ).fetchall()
+        result = []
+        for row in rows:
+            r = DietRecord()
+            for f in ["id", "user_id", "group_id", "log_date", "meal_type",
+                      "description", "calories_est", "protein_est", "created_at"]:
+                setattr(r, f, row[f])
+            result.append(r)
+        return result
+    finally:
+        conn.close()
+
+
+# ========== 成就操作 ==========
+
+def save_achievement(a: Achievement):
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO achievements (
+                user_id, group_id, achievement_id, unlocked_at
+            ) VALUES (?,?,?,?)
+        """, (
+            a.user_id, a.group_id, a.achievement_id, a.unlocked_at
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_achievements(user_id: str, group_id: str) -> list[Achievement]:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM achievements WHERE user_id=? AND group_id=? ORDER BY unlocked_at ASC",
+            (user_id, group_id)
+        ).fetchall()
+        result = []
+        for row in rows:
+            a = Achievement()
+            for f in ["user_id", "group_id", "achievement_id", "unlocked_at"]:
+                setattr(a, f, row[f])
+            result.append(a)
+        return result
+    finally:
+        conn.close()
+
+
+def is_achievement_unlocked(user_id: str, group_id: str, achievement_id: str) -> bool:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM achievements WHERE user_id=? AND group_id=? AND achievement_id=?",
+            (user_id, group_id, achievement_id)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+# ========== 训练周期操作 ==========
+
+def save_training_cycle(cycle: TrainingCycle):
+    cycle.created_at = datetime.now().isoformat()
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO training_cycles (
+                user_id, group_id, start_date, end_date,
+                total_weeks, current_week, cycle_type,
+                status, deload_week, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (
+            cycle.user_id, cycle.group_id, cycle.start_date, cycle.end_date,
+            cycle.total_weeks, cycle.current_week, cycle.cycle_type,
+            cycle.status, cycle.deload_week, cycle.created_at
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_active_cycle(user_id: str, group_id: str) -> Optional[TrainingCycle]:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM training_cycles WHERE user_id=? AND group_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+            (user_id, group_id)
+        ).fetchone()
+        if not row:
+            return None
+        c = TrainingCycle()
+        for f in ["id", "user_id", "group_id", "start_date", "end_date",
+                  "total_weeks", "current_week", "cycle_type",
+                  "status", "deload_week", "created_at"]:
+            setattr(c, f, row[f])
+        return c
+    finally:
+        conn.close()
+
+
+def update_cycle_week(cycle_id: int, current_week: int):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE training_cycles SET current_week=? WHERE id=?",
+            (current_week, cycle_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def complete_cycle(cycle_id: int):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE training_cycles SET status='completed' WHERE id=?",
+            (cycle_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ========== 体重记录操作 ==========
+
+def add_weight_record(record: WeightRecord):
+    record.created_at = datetime.now().isoformat()
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO weight_records (
+                user_id, group_id, record_date, weight_kg,
+                source, created_at
+            ) VALUES (?,?,?,?,?,?)
+        """, (
+            record.user_id, record.group_id, record.record_date,
+            record.weight_kg, record.source, record.created_at
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_weight_history(user_id: str, group_id: str, days: int = 30) -> list[dict]:
+    since = (date.today() - timedelta(days=days)).isoformat()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM weight_records WHERE user_id=? AND group_id=? AND record_date>=? ORDER BY record_date DESC",
+            (user_id, group_id, since)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_total_checkins(user_id: str, group_id: str) -> int:
+    """获取用户累计打卡总次数（高效 COUNT 查询）"""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM checkin_records WHERE user_id=? AND group_id=?",
+            (user_id, group_id)
+        ).fetchone()
+        return row["cnt"] if row else 0
     finally:
         conn.close()

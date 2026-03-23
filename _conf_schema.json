@@ -66,5 +66,29 @@
     "type": "string",
     "hint": "用于生成个性化提醒消息、简单数据检查等不需要高质量的场景。建议配置便宜的模型以节省费用。留空则提醒使用纯模板（零成本），不走 AI。",
     "default": ""
+  },
+  "saturday_feedback_time": {
+    "description": "周六体重反馈时间",
+    "type": "string",
+    "hint": "每周六向用户询问体重和训练反馈的时间，格式 HH:MM",
+    "default": "10:00"
+  },
+  "weekly_report_time": {
+    "description": "群周报发送时间",
+    "type": "string",
+    "hint": "每周日发送群健身周报的时间，格式 HH:MM",
+    "default": "20:00"
+  },
+  "achievement_enabled": {
+    "description": "启用成就系统",
+    "type": "bool",
+    "hint": "开启后，用户打卡、升级等行为会触发成就解锁和经验奖励",
+    "default": true
+  },
+  "diet_log_enabled": {
+    "description": "启用饮食打卡",
+    "type": "bool",
+    "hint": "开启后，用户可以通过自然语言记录饮食，AI 估算热量和蛋白质",
+    "default": true
   }
 }

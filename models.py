@@ -87,3 +87,68 @@ class TrainingPlan:
     adjusted: bool = False     # 是否被动态调整过
     adjust_reason: str = ""
     created_at: str = ""
+
+
+@dataclass
+class UserPortrait:
+    """用户画像"""
+    user_id: str = ""
+    group_id: str = ""
+    weight_trend: str = ""           # JSON 字符串
+    training_preference: str = ""    # JSON 字符串
+    recovery_score: int = 50
+    progress_speed: str = "normal"
+    fatigue_score: int = 0
+    weekly_feedback: str = ""
+    updated_at: str = ""
+
+
+@dataclass
+class DietRecord:
+    """饮食记录"""
+    id: int = 0
+    user_id: str = ""
+    group_id: str = ""
+    log_date: str = ""
+    meal_type: str = ""
+    description: str = ""
+    calories_est: int = 0
+    protein_est: float = 0.0
+    created_at: str = ""
+
+
+@dataclass
+class Achievement:
+    """成就记录"""
+    user_id: str = ""
+    group_id: str = ""
+    achievement_id: str = ""
+    unlocked_at: str = ""
+
+
+@dataclass
+class TrainingCycle:
+    """训练周期"""
+    id: int = 0
+    user_id: str = ""
+    group_id: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    total_weeks: int = 4
+    current_week: int = 1
+    cycle_type: str = ""
+    status: str = "active"
+    deload_week: int = 0
+    created_at: str = ""
+
+
+@dataclass
+class WeightRecord:
+    """体重记录"""
+    id: int = 0
+    user_id: str = ""
+    group_id: str = ""
+    record_date: str = ""
+    weight_kg: float = 0.0
+    source: str = "manual"
+    created_at: str = ""

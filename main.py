@@ -8,7 +8,7 @@
 - QQ群头衔同步
 """
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.event.filter import EventMessageType
@@ -23,6 +23,12 @@ from .tools import set_qq_group_title, roll_random_event
 from .prompts import SYSTEM_PROMPT_FULL, PERSONA_PROMPTS
 from .reminder import ScheduledReminder
 from .rpg import calc_level, exp_for_next_level, get_title
+from .fatigue import FatigueAssessor
+from .portrait import UserPortraitManager
+from .diet import DietLogger
+from .achievement import AchievementSystem, ACHIEVEMENTS
+from .progress import ProgressDetector
+from .periodization import PeriodizationEngine
 
 # 群白名单辅助
 def _parse_enabled_groups(raw) -> set:
@@ -36,8 +42,8 @@ def _parse_enabled_groups(raw) -> set:
 @register(
     "astrbot_plugin_fitness",
     "FitnessCoach",
-    "智能健身教练 - 个人档案/训练计划/打卡提醒/动态调整/补剂跟进",
-    "1.0.0",
+    "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报",
+    "2.0.0",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -56,6 +62,8 @@ class FitnessCoachPlugin(Star):
         self.default_reminder_time = config.get("default_reminder_time", "17:30")
         self.chat_provider_id = config.get("chat_provider_id", "")
         self.lite_provider_id = config.get("lite_provider_id", "")
+        self.achievement_enabled = config.get("achievement_enabled", True)
+        self.diet_log_enabled = config.get("diet_log_enabled", True)
 
         # AI 人格
         persona_choice = config.get("coach_persona", "热血教练 - 充满激情，像动漫里的热血导师")
@@ -68,8 +76,22 @@ class FitnessCoachPlugin(Star):
         # 定时提醒
         self.reminder = None
         if self.reminder_enabled:
-            self.reminder = ScheduledReminder(context, self.lite_provider_id)
+            saturday_time = config.get("saturday_feedback_time", "10:00")
+            report_time = config.get("weekly_report_time", "20:00")
+            self.reminder = ScheduledReminder(
+                context, self.lite_provider_id,
+                saturday_feedback_time=saturday_time,
+                weekly_report_time=report_time,
+            )
             self.reminder.start()
+
+        # v2.0 模块初始化
+        self.fatigue_assessor = FatigueAssessor()
+        self.portrait_manager = UserPortraitManager()
+        self.diet_logger = DietLogger()
+        self.achievement_system = AchievementSystem()
+        self.progress_detector = ProgressDetector()
+        self.periodization_engine = PeriodizationEngine()
 
         logger.info(f"智能健身教练插件已加载 | 群白名单: {self._enabled_groups or '全部'}")
 
@@ -148,6 +170,20 @@ class FitnessCoachPlugin(Star):
                 fitness_prompt += f"- 今日计划: {today_plan.workout_type} - {today_plan.workout_detail}\n"
             today_checkin = db.get_today_checkin(user_id, group_id)
             fitness_prompt += f"- 今日已打卡: {'是' if today_checkin else '否'}\n"
+
+            # v2.0: 注入画像数据
+            portrait = db.get_portrait(user_id, group_id)
+            if portrait:
+                fitness_prompt += f"\n## 用户画像数据：\n"
+                fitness_prompt += f"- 恢复能力评分: {portrait.recovery_score}/100\n"
+                fitness_prompt += f"- 进步速度: {portrait.progress_speed}\n"
+                fitness_prompt += f"- 疲劳度: {portrait.fatigue_score}/100\n"
+                if portrait.weight_trend:
+                    fitness_prompt += f"- 体重趋势: {portrait.weight_trend}\n"
+                if portrait.training_preference:
+                    fitness_prompt += f"- 训练偏好: {portrait.training_preference}\n"
+                if portrait.weekly_feedback:
+                    fitness_prompt += f"- 最近反馈: {portrait.weekly_feedback}\n"
         else:
             fitness_prompt += "\n\n## 当前用户还没有建立健身档案，请引导用户建档。\n"
 
@@ -486,11 +522,242 @@ class FitnessCoachPlugin(Star):
             "supplement_details": p.supplement_details,
         }, ensure_ascii=False)
 
+        # ===== v2.0 集成：成就检查 =====
+        new_achievements = []
+        if self.achievement_enabled:
+            total_checkins = db.get_total_checkins(user_id, group_id)
+            ach_context = {"streak": streak, "total_checkins": total_checkins}
+            new_achievements = self.achievement_system.check_achievements(
+                user_id, group_id, "checkin", ach_context
+            )
+            if leveled_up:
+                level_achs = self.achievement_system.check_achievements(
+                    user_id, group_id, "levelup",
+                    {"level": p.level, "old_level": old_level}
+                )
+                new_achievements.extend(level_achs)
+            if quest_complete:
+                quest_achs = self.achievement_system.check_achievements(
+                    user_id, group_id, "quest_complete", {}
+                )
+                new_achievements.extend(quest_achs)
+
+        # 成就经验值奖励
+        ach_exp = 0
+        ach_msg = ""
+        for a in new_achievements:
+            ach_exp += a.get("exp", 0)
+            ach_msg += f"\n🏅 解锁成就【{a['name']}】+{a['exp']}exp"
+        if ach_exp > 0:
+            p.exp += ach_exp
+            p.level = calc_level(p.exp)
+            db.save_profile(p)
+
+        # ===== v2.0 集成：疲劳评估 =====
+        fatigue_result = self.fatigue_assessor.assess(user_id, group_id)
+        fatigue_msg = ""
+        if fatigue_result.score > 60:
+            fatigue_msg = f"\n⚠️ 疲劳度 {fatigue_result.score}/100 - {fatigue_result.suggestion}"
+
+        # ===== v2.0 集成：进步检测 =====
+        progress_signals = self.progress_detector.detect_on_checkin(user_id, group_id)
+        progress_msg = ""
+        if progress_signals:
+            progress_msg = "\n" + "\n".join(progress_signals[:2])  # 最多显示2条
+
+        # ===== v2.0 集成：更新画像 =====
+        try:
+            self.portrait_manager.update_portrait(user_id, group_id)
+        except Exception:
+            pass  # 画像更新失败不影响打卡
+
         result = json.dumps({
-            "rpg_text": rpg_text, "exp_gained": total_exp,
+            "rpg_text": rpg_text + ach_msg + fatigue_msg + progress_msg,
+            "exp_gained": int(total_exp) + ach_exp,
             "streak": streak, "extra_training_context": extra_ctx,
         }, ensure_ascii=False)
         yield event.plain_result(result)
+
+    @filter.llm_tool(name="makeup_checkin")
+    async def tool_makeup_checkin(
+        self, event: AstrMessageEvent,
+        workout_type: str, workout_detail: str,
+        duration_min: int, feeling: str,
+        calories_est: int = 0, note: str = "",
+    ):
+        '''补卡：记录昨天忘记打卡的训练，经验值减半。仅支持补前一天的卡。
+
+        Args:
+            workout_type(string): 训练类型 力量/有氧/拉伸/混合
+            workout_detail(string): 具体训练内容
+            duration_min(number): 训练时长分钟
+            feeling(string): 感受 轻松/适中/吃力/很累
+            calories_est(number): 估算消耗大卡
+            note(string): 备注
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        p = db.get_profile(user_id, group_id)
+        if not p:
+            yield event.plain_result("用户尚未建档，请先创建档案。")
+            return
+
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+        # 检查昨天是否已有打卡
+        conn = db.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM checkin_records WHERE user_id=? AND group_id=? AND checkin_date=?",
+                (user_id, group_id, yesterday)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if row:
+            yield event.plain_result("昨天已有打卡记录，无需补卡。")
+            return
+
+        # 创建昨天的打卡记录
+        record = CheckinRecord(
+            user_id=user_id, group_id=group_id, checkin_date=yesterday,
+            workout_type=workout_type, workout_detail=workout_detail,
+            duration_min=int(duration_min), calories_est=int(calories_est),
+            feeling=feeling, note=f"[补卡] {note}",
+        )
+        db.add_checkin(record)
+
+        # 经验值计算（减半）
+        base_exp = 50
+        feeling_bonus = {"轻松": 0, "适中": 10, "吃力": 25, "很累": 40}.get(feeling, 0)
+        duration_bonus = min((int(duration_min) // 10) * 5, 30)
+        streak = db.get_checkin_streak(user_id, group_id)
+        streak_bonus = min(streak * 3, 45)
+        full_exp = base_exp + feeling_bonus + duration_bonus + streak_bonus
+        half_exp = full_exp // 2
+
+        p.exp += half_exp
+        p.level = calc_level(p.exp)
+        db.save_profile(p)
+
+        result = json.dumps({
+            "status": "补卡成功",
+            "date": yesterday,
+            "exp_gained": half_exp,
+            "exp_full": full_exp,
+            "streak": streak,
+            "level": p.level,
+        }, ensure_ascii=False)
+        yield event.plain_result(result)
+
+    # ==================== v2.0 新增 LLM Tools ====================
+
+    @filter.llm_tool(name="record_diet")
+    async def tool_record_diet(
+        self, event: AstrMessageEvent,
+        description: str, meal_type: str,
+        calories_est: int, protein_est: float,
+    ):
+        '''记录用户的饮食打卡。AI 根据用户描述估算热量和蛋白质后调用。
+
+        Args:
+            description(string): 饮食描述
+            meal_type(string): 餐次类型 早餐/午餐/晚餐/加餐
+            calories_est(number): 估算热量(大卡)
+            protein_est(number): 估算蛋白质(克)
+        '''
+        if not self.diet_log_enabled:
+            yield event.plain_result("饮食打卡功能已关闭。")
+            return
+
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+
+        record = self.diet_logger.log_meal(
+            user_id, group_id, description, meal_type,
+            int(calories_est), float(protein_est),
+        )
+
+        # 检查首次饮食打卡成就
+        ach_msg = ""
+        if self.achievement_enabled:
+            achievements = self.achievement_system.check_achievements(
+                user_id, group_id, "diet_log", {}
+            )
+            if achievements:
+                for a in achievements:
+                    ach_msg += f"\n🏅 解锁成就【{a['name']}】+{a['exp']}exp"
+
+        result = json.dumps({
+            "status": "饮食已记录",
+            "meal_type": meal_type,
+            "calories": calories_est,
+            "protein": protein_est,
+            "achievements": ach_msg,
+        }, ensure_ascii=False)
+        yield event.plain_result(result)
+
+    @filter.llm_tool(name="get_diet_summary")
+    async def tool_get_diet_summary(self, event: AstrMessageEvent, log_date: str = ""):
+        '''查询用户某日的饮食汇总，默认今天。
+
+        Args:
+            log_date(string): 查询日期YYYY-MM-DD，默认今天
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        summary = self.diet_logger.get_daily_summary(user_id, group_id, log_date)
+        yield event.plain_result(json.dumps(summary, ensure_ascii=False))
+
+    @filter.llm_tool(name="generate_training_cycle")
+    async def tool_generate_training_cycle(
+        self, event: AstrMessageEvent, weeks: int = 4,
+    ):
+        '''为用户生成周期化训练计划（4-8周），包含渐进超负荷和去负荷周。
+
+        Args:
+            weeks(number): 训练周期周数，4-8之间，默认4
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        plans = self.periodization_engine.generate_cycle(user_id, group_id, int(weeks))
+        overview = self.periodization_engine.get_cycle_overview(user_id, group_id)
+        result = json.dumps({
+            "status": f"已生成{len(plans)//7}周训练周期",
+            "total_days": len(plans),
+            "overview": overview,
+        }, ensure_ascii=False)
+        yield event.plain_result(result)
+
+    @filter.llm_tool(name="get_cycle_overview")
+    async def tool_get_cycle_overview(self, event: AstrMessageEvent):
+        '''查看用户当前训练周期概览：阶段、本周重点、剩余周数。'''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        overview = self.periodization_engine.get_cycle_overview(user_id, group_id)
+        if not overview:
+            yield event.plain_result("当前没有活跃的训练周期，可以让我帮你生成一个。")
+            return
+        yield event.plain_result(json.dumps(overview, ensure_ascii=False))
+
+    @filter.llm_tool(name="get_progress_report")
+    async def tool_get_progress_report(self, event: AstrMessageEvent):
+        '''生成用户的进步报告，对比近期和之前的训练数据。'''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        report = self.progress_detector.generate_report(user_id, group_id)
+        yield event.plain_result(report)
+
+    @filter.llm_tool(name="get_achievements")
+    async def tool_get_achievements(self, event: AstrMessageEvent):
+        '''查询用户已解锁的成就列表。'''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        unlocked = self.achievement_system.get_unlocked(user_id, group_id)
+        if not unlocked:
+            yield event.plain_result("还没有解锁任何成就，继续加油！")
+            return
+        yield event.plain_result(json.dumps(unlocked, ensure_ascii=False))
 
     @filter.llm_tool(name="get_today_plan")
     async def tool_get_today_plan(self, event: AstrMessageEvent):
@@ -781,6 +1048,104 @@ class FitnessCoachPlugin(Star):
                 text += f"  {p.plan_date}: {day_type}{adjusted}\n"
         else:
             text += f"━━━━━━━━━━━━━━━\n📅 近期计划: 暂无，@我 说'帮我安排这周的训练'来生成～\n"
+
+        yield event.plain_result(text)
+
+    # ==================== v2.0 手动指令 ====================
+
+    @filter.command("我的成就")
+    async def cmd_achievements(self, event: AstrMessageEvent):
+        """查看已解锁成就"""
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        unlocked = self.achievement_system.get_unlocked(user_id, group_id)
+
+        if not unlocked:
+            yield event.plain_result("你还没有解锁任何成就，继续打卡就能解锁哦～ 💪")
+            return
+
+        text = f"🏅 已解锁成就 ({len(unlocked)}/{len(ACHIEVEMENTS)})\n━━━━━━━━━━━━━━━\n"
+        for a in unlocked:
+            text += f"🏅 {a['name']} - {a['desc']} (+{a['exp']}exp)\n"
+            text += f"   解锁时间: {a['unlocked_at'][:10]}\n"
+
+        # 未解锁的成就
+        locked = [aid for aid in ACHIEVEMENTS if aid not in {a['id'] for a in unlocked}]
+        if locked:
+            text += f"\n🔒 未解锁: {len(locked)} 个成就等你挑战"
+
+        yield event.plain_result(text)
+
+    @filter.command("饮食记录")
+    async def cmd_diet_record(self, event: AstrMessageEvent):
+        """查看今日饮食汇总"""
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        summary = self.diet_logger.get_daily_summary(user_id, group_id)
+
+        if summary["meal_count"] == 0:
+            yield event.plain_result("今天还没有饮食记录，告诉我你吃了什么我帮你记录～ 🍽️")
+            return
+
+        text = f"🍽️ 今日饮食记录\n━━━━━━━━━━━━━━━\n"
+        for m in summary["meals"]:
+            text += f"  {m['meal_type']}: {m['description']} ({m['calories']}kcal, {m['protein']}g蛋白)\n"
+        text += f"━━━━━━━━━━━━━━━\n"
+        text += f"📊 总计: {summary['total_calories']}kcal | {summary['total_protein']}g蛋白质\n"
+        text += f"共 {summary['meal_count']} 餐"
+
+        yield event.plain_result(text)
+
+    @filter.command("补卡")
+    async def cmd_makeup(self, event: AstrMessageEvent):
+        """引导用户补卡"""
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+        # 检查昨天是否已有打卡
+        conn = db.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM checkin_records WHERE user_id=? AND group_id=? AND checkin_date=?",
+                (user_id, group_id, yesterday)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if row:
+            yield event.plain_result("昨天已有打卡记录，不需要补卡哦～")
+            return
+
+        yield event.plain_result(
+            f"📝 补卡模式（补 {yesterday} 的训练）\n"
+            f"注意：补卡经验减半\n\n"
+            f"请告诉我你昨天练了什么，比如：\n"
+            f"'昨天做了40分钟力量训练，练了胸和三头，感觉适中'"
+        )
+
+    @filter.command("训练周期")
+    async def cmd_training_cycle(self, event: AstrMessageEvent):
+        """查看当前训练周期概览"""
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        overview = self.periodization_engine.get_cycle_overview(user_id, group_id)
+
+        if not overview:
+            yield event.plain_result("当前没有活跃的训练周期，@我 说'帮我安排训练周期'来生成一个～")
+            return
+
+        deload_info = " (去负荷周)" if overview["is_deload_week"] else ""
+        text = (
+            f"📅 训练周期概览\n━━━━━━━━━━━━━━━\n"
+            f"类型: {overview['cycle_type']}\n"
+            f"当前: 第 {overview['current_week']}/{overview['total_weeks']} 周{deload_info}\n"
+            f"剩余: {overview['remaining_weeks']} 周\n"
+            f"周期: {overview['start_date']} ~ {overview['end_date']}\n"
+        )
+        if overview["deload_week"] > 0:
+            text += f"去负荷周: 第 {overview['deload_week']} 周\n"
 
         yield event.plain_result(text)
 

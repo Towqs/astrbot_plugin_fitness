@@ -9,6 +9,8 @@ from astrbot import logger
 from . import database as db
 from .rpg import get_title
 from .prompts import REMINDER_TEMPLATES, REMINDER_AI_PROMPT
+from .weekly_report import WeeklyReportGenerator
+from .periodization import PeriodizationEngine
 
 try:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,12 +31,18 @@ class ScheduledReminder:
     按用户设定的提醒时间分组，每个时间点一个 cron job。
     """
 
-    def __init__(self, context, lite_provider_id: str = ""):
+    def __init__(self, context, lite_provider_id: str = "",
+                 saturday_feedback_time: str = "10:00",
+                 weekly_report_time: str = "20:00"):
         self.context = context
         self.lite_provider_id = lite_provider_id
+        self.saturday_feedback_time = saturday_feedback_time
+        self.weekly_report_time = weekly_report_time
         self._scheduler = None
         self._reminded_today: set = set()
         self._last_date: str = ""
+        self._weekly_report_gen = WeeklyReportGenerator()
+        self._periodization_engine = PeriodizationEngine()
 
     def start(self):
         if not AsyncIOScheduler or not CronTrigger:
@@ -49,6 +57,39 @@ class ScheduledReminder:
             misfire_grace_time=120,
         )
         self._rebuild_jobs()
+
+        # v2.0: 周六体重反馈
+        try:
+            sat_h, sat_m = map(int, self.saturday_feedback_time.split(":"))
+            self._scheduler.add_job(
+                self._on_saturday_feedback,
+                trigger=CronTrigger(day_of_week="sat", hour=sat_h, minute=sat_m),
+                name="fitness_saturday_feedback",
+                misfire_grace_time=120,
+            )
+        except Exception as e:
+            logger.warning(f"注册周六反馈任务失败: {e}")
+
+        # v2.0: 群周报（周日）
+        try:
+            rep_h, rep_m = map(int, self.weekly_report_time.split(":"))
+            self._scheduler.add_job(
+                self._on_weekly_report,
+                trigger=CronTrigger(day_of_week="sun", hour=rep_h, minute=rep_m),
+                name="fitness_weekly_report",
+                misfire_grace_time=120,
+            )
+        except Exception as e:
+            logger.warning(f"注册周报任务失败: {e}")
+
+        # v2.0: 去负荷检测（周一）
+        self._scheduler.add_job(
+            self._on_deload_check,
+            trigger=CronTrigger(day_of_week="mon", hour=9, minute=0),
+            name="fitness_deload_check",
+            misfire_grace_time=120,
+        )
+
         mode = "AI个性化" if self.lite_provider_id else "纯模板"
         logger.info(f"健身打卡提醒服务已启动 (APScheduler, {mode}模式)")
 
@@ -219,6 +260,106 @@ class ScheduledReminder:
             {"type": "text", "data": {"text": f" {text}"}},
         ]
 
+        try:
+            gid = int(qq_group_id) if qq_group_id.isdigit() else qq_group_id
+            await client.send_group_msg(group_id=gid, message=message)
+            return True
+        except Exception as e:
+            logger.error(f"发送群消息失败: {e}")
+        return False
+
+    # ==================== v2.0 定时任务 ====================
+
+    async def _on_saturday_feedback(self):
+        """周六体重反馈：向所有已建档用户发送体重询问"""
+        profiles = db.get_all_active_profiles()
+        # 按群分组
+        groups = {}
+        for p in profiles:
+            gid = p["group_id"]
+            groups.setdefault(gid, []).append(p)
+
+        for group_id, members in groups.items():
+            for p in members:
+                nickname = p.get("nickname", p["user_id"])
+                msg = (
+                    f"📊 {nickname}，周六体重反馈时间到啦～\n"
+                    f"请告诉我你现在的体重（kg），以及这周训练的感受和反馈。\n"
+                    f"比如：'体重72.5，这周感觉还不错，但腿部训练有点吃力'"
+                )
+                await self._send_group_message(group_id, p["user_id"], msg)
+
+        logger.info(f"周六体重反馈已发送给 {len(profiles)} 位用户")
+
+    async def _on_weekly_report(self):
+        """周日群周报：生成并发送群健身数据总结"""
+        # 获取所有有活跃用户的群
+        profiles = db.get_all_active_profiles()
+        groups = set(p["group_id"] for p in profiles)
+
+        for group_id in groups:
+            try:
+                report_data = self._weekly_report_gen.generate_report(group_id)
+                text = report_data["text"]
+
+                # 如果有低成本模型，生成教练评语
+                if self.lite_provider_id and not report_data["stats"].get("empty"):
+                    try:
+                        stats = report_data["stats"]
+                        prompt = (
+                            f"你是一个专业健身教练，请根据以下群周报数据写一段简短的总结评语（80字以内）：\n"
+                            f"打卡人数: {stats.get('checkin_users', 0)}/{stats.get('total_members', 0)}\n"
+                            f"总打卡次数: {stats.get('total_checkins', 0)}\n"
+                            f"打卡率: {stats.get('checkin_rate', 0)}%\n"
+                            f"要求：鼓励为主，简洁有力，带1-2个emoji"
+                        )
+                        resp = await self.context.llm_generate(
+                            chat_provider_id=self.lite_provider_id,
+                            prompt=prompt,
+                        )
+                        if resp and resp.completion_text:
+                            text = self._weekly_report_gen.format_report(
+                                stats, resp.completion_text.strip()
+                            )
+                    except Exception as e:
+                        logger.debug(f"周报AI评语生成失败: {e}")
+
+                # 发送周报（不@特定用户，发给群）
+                await self._send_group_text(group_id, text)
+                logger.info(f"已发送周报到群 {group_id}")
+            except Exception as e:
+                logger.error(f"生成周报失败 {group_id}: {e}")
+
+    async def _on_deload_check(self):
+        """周一去负荷检测：检查所有活跃用户是否需要去负荷"""
+        profiles = db.get_all_active_profiles()
+        for p in profiles:
+            user_id = p["user_id"]
+            group_id = p["group_id"]
+            try:
+                if self._periodization_engine.check_deload_needed(user_id, group_id):
+                    nickname = p.get("nickname", user_id)
+                    msg = (
+                        f"⚠️ {nickname}，你已经连续高强度训练好几周了！\n"
+                        f"建议这周安排一个去负荷周，降低训练强度让身体恢复。\n"
+                        f"告诉我「安排去负荷周」我来帮你调整计划～"
+                    )
+                    await self._send_group_message(group_id, user_id, msg)
+                    logger.info(f"已发送去负荷建议给 {nickname}")
+            except Exception as e:
+                logger.debug(f"去负荷检测失败 {user_id}: {e}")
+
+    async def _send_group_text(self, group_id: str, text: str):
+        """发送纯文本群消息（不@任何人）"""
+        parts = group_id.split(":")
+        qq_group_id = parts[-1] if len(parts) >= 3 else group_id
+
+        client = self._get_bot_client()
+        if not client:
+            logger.warning("无法获取 bot 客户端，跳过消息发送")
+            return False
+
+        message = [{"type": "text", "data": {"text": text}}]
         try:
             gid = int(qq_group_id) if qq_group_id.isdigit() else qq_group_id
             await client.send_group_msg(group_id=gid, message=message)

@@ -124,6 +124,31 @@ SYSTEM_PROMPT_FULL = """\
 - 不给医疗建议，伤病建议就医
 - 补剂只科普，不推荐品牌
 - 群头衔设置失败不要反复提及
+
+## v2.0 新功能工具说明：
+
+### 饮食打卡（record_diet / get_diet_summary）：
+- 用户描述吃了什么时，你估算热量和蛋白质，然后调用 record_diet 记录
+- 用户问"今天吃了什么"时调用 get_diet_summary 查询汇总
+- 估算要合理，不确定时给出范围并取中间值
+
+### 补卡（makeup_checkin）：
+- 用户说"昨天忘记打卡了"时引导补卡
+- 仅支持补前一天的卡，经验减半
+- 如果昨天已有记录则拒绝
+
+### 成就系统（get_achievements）：
+- 打卡时自动检查成就解锁，无需手动调用
+- 用户问"我的成就"时调用 get_achievements 展示
+
+### 训练周期（generate_training_cycle / get_cycle_overview）：
+- 用户说"帮我安排训练周期"时调用 generate_training_cycle
+- 用户问"我的训练周期"时调用 get_cycle_overview
+- 周期包含渐进超负荷和去负荷周
+
+### 进步报告（get_progress_report）：
+- 用户问"我进步了吗"时调用
+- 打卡时自动检测进步信号并附加到反馈中
 """
 
 
@@ -150,6 +175,24 @@ REMINDER_AI_PROMPT = """\
 用户: {nickname} | 目标: {fitness_goal} | 连续打卡: {streak}天 | 状态: {current_status}
 {extra_info}
 要求：简短有力，带1个emoji，不要啰嗦。
+"""
+
+# ==================== 周六反馈消息模板 ====================
+
+SATURDAY_FEEDBACK_TEMPLATE = (
+    "📊 {nickname}，周六体重反馈时间到啦～\n"
+    "请告诉我你现在的体重（kg），以及这周训练的感受和反馈。\n"
+    "比如：'体重72.5，这周感觉还不错，但腿部训练有点吃力'"
+)
+
+# ==================== 周报 AI 评语提示 ====================
+
+WEEKLY_REPORT_AI_PROMPT = """\
+你是一个专业健身教练，请根据以下群周报数据写一段简短的总结评语（80字以内）：
+打卡人数: {checkin_users}/{total_members}
+总打卡次数: {total_checkins}
+打卡率: {checkin_rate}%
+要求：鼓励为主，简洁有力，带1-2个emoji
 """
 
 # ==================== 向后兼容 ====================
