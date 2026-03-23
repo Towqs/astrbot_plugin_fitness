@@ -18,7 +18,7 @@ from astrbot.core import AstrBotConfig
 from astrbot import logger
 
 from . import database as db
-from .models import UserProfile, CheckinRecord, TrainingPlan
+from .models import UserProfile, CheckinRecord, TrainingPlan, WeightRecord
 from .tools import set_qq_group_title, roll_random_event
 from .prompts import SYSTEM_PROMPT_FULL, PERSONA_PROMPTS
 from .reminder import ScheduledReminder
@@ -249,8 +249,9 @@ class FitnessCoachPlugin(Star):
         for key, val in fields.items():
             if val:
                 setattr(p, key, val)
-        # 布尔字段单独处理
-        p.has_supplements = has_supplements
+        # 布尔字段：仅在同时提供了 supplement_details 时才更新，避免分步建档覆盖
+        if supplement_details or has_supplements:
+            p.has_supplements = has_supplements
 
         if p.height_cm and p.weight_kg and p.age and p.gender and p.fitness_goal:
             p.onboarding_step = "complete"
@@ -374,15 +375,22 @@ class FitnessCoachPlugin(Star):
         if weight_kg:
             updated.append(f"weight_kg: {p.weight_kg} → {weight_kg}")
             p.weight_kg = weight_kg
+            # 同步写入体重记录表，供进步报告使用
+            wr = WeightRecord(
+                user_id=user_id, group_id=group_id,
+                record_date=date.today().isoformat(),
+                weight_kg=weight_kg, source="update_status",
+            )
+            db.add_weight_record(wr)
         if meals_per_day:
             updated.append(f"meals_per_day: {p.meals_per_day} → {meals_per_day}")
             p.meals_per_day = meals_per_day
 
-        # 布尔字段：只要传了 True 就更新（AI 不传时默认 False）
-        # 但如果 supplement_details 被清空，也应该能关闭
-        if has_supplements != p.has_supplements:
-            updated.append(f"has_supplements: {p.has_supplements} → {has_supplements}")
-            p.has_supplements = has_supplements
+        # 布尔字段：仅在明确涉及补剂话题时才更新，避免其他字段更新时意外清除
+        if supplement_details or has_supplements:
+            if has_supplements != p.has_supplements:
+                updated.append(f"has_supplements: {p.has_supplements} → {has_supplements}")
+                p.has_supplements = has_supplements
 
         # reminder_time 特殊处理："none" 表示关闭提醒
         if reminder_time:
@@ -549,9 +557,20 @@ class FitnessCoachPlugin(Star):
             ach_exp += a.get("exp", 0)
             ach_msg += f"\n🏅 解锁成就【{a['name']}】+{a['exp']}exp"
         if ach_exp > 0:
+            pre_ach_level = p.level
             p.exp += ach_exp
             p.level = calc_level(p.exp)
             db.save_profile(p)
+            # 成就经验导致升级时也更新头衔
+            if p.level > pre_ach_level:
+                new_title = get_title(p.level)
+                if self.title_sync_enabled:
+                    ok = await set_qq_group_title(event, user_id, f"Lv.{p.level} {new_title}")
+                    ach_msg += f"\n🎉 成就奖励升级到 Lv.{p.level}【{new_title}】！"
+                    if ok:
+                        ach_msg += " 群头衔已更新！"
+                else:
+                    ach_msg += f"\n🎉 成就奖励升级到 Lv.{p.level}【{new_title}】！"
 
         # ===== v2.0 集成：疲劳评估 =====
         fatigue_result = self.fatigue_assessor.assess(user_id, group_id)
@@ -636,17 +655,64 @@ class FitnessCoachPlugin(Star):
         full_exp = base_exp + feeling_bonus + duration_bonus + streak_bonus
         half_exp = full_exp // 2
 
+        old_level = p.level
         p.exp += half_exp
         p.level = calc_level(p.exp)
+        leveled_up = p.level > old_level
+
+        # 闯关进度（补卡也算）
+        quest_msg = ""
+        quest_complete = False
+        if p.quest_days > 0 and p.quest_progress < p.quest_days:
+            p.quest_progress += 1
+            if p.quest_progress >= p.quest_days:
+                quest_complete = True
+                quest_bonus = {3: 150, 7: 500, 30: 2000}.get(p.quest_days, 100)
+                p.exp += quest_bonus
+                p.level = calc_level(p.exp)
+                quest_names = {3: "新手试炼", 7: "进阶挑战", 30: "BOSS战"}
+                qname = quest_names.get(p.quest_days, f"{p.quest_days}天")
+                quest_msg = f"🏆 闯关【{qname}】通关！奖励 {quest_bonus} 经验！"
+
         db.save_profile(p)
+
+        # 成就检查（补卡也触发）
+        ach_msg = ""
+        ach_exp = 0
+        if self.achievement_enabled:
+            total_checkins = db.get_total_checkins(user_id, group_id)
+            ach_context = {"streak": streak, "total_checkins": total_checkins}
+            new_achievements = self.achievement_system.check_achievements(
+                user_id, group_id, "checkin", ach_context
+            )
+            if leveled_up:
+                level_achs = self.achievement_system.check_achievements(
+                    user_id, group_id, "levelup",
+                    {"level": p.level, "old_level": old_level}
+                )
+                new_achievements.extend(level_achs)
+            if quest_complete:
+                quest_achs = self.achievement_system.check_achievements(
+                    user_id, group_id, "quest_complete", {}
+                )
+                new_achievements.extend(quest_achs)
+            for a in new_achievements:
+                ach_exp += a.get("exp", 0)
+                ach_msg += f"\n🏅 解锁成就【{a['name']}】+{a['exp']}exp"
+            if ach_exp > 0:
+                p.exp += ach_exp
+                p.level = calc_level(p.exp)
+                db.save_profile(p)
 
         result = json.dumps({
             "status": "补卡成功",
             "date": yesterday,
-            "exp_gained": half_exp,
+            "exp_gained": half_exp + ach_exp,
             "exp_full": full_exp,
             "streak": streak,
             "level": p.level,
+            "quest_msg": quest_msg,
+            "achievements": ach_msg,
         }, ensure_ascii=False)
         yield event.plain_result(result)
 
@@ -672,6 +738,12 @@ class FitnessCoachPlugin(Star):
 
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
+
+        # 检查用户是否已建档
+        p = db.get_profile(user_id, group_id)
+        if not p:
+            yield event.plain_result("用户尚未建档，请先创建档案。")
+            return
 
         record = self.diet_logger.log_meal(
             user_id, group_id, description, meal_type,

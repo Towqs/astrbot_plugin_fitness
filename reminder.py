@@ -139,6 +139,8 @@ class ScheduledReminder:
         self._reminded_today.clear()
         self._last_date = date.today().isoformat()
         self._rebuild_jobs()
+        # 自动推进训练周期的 current_week
+        await self._advance_cycle_weeks()
 
     async def _on_remind_tick(self, time_str: str):
         """某个时间点触发，查找该时间的所有用户并发送提醒"""
@@ -269,6 +271,31 @@ class ScheduledReminder:
         return False
 
     # ==================== v2.0 定时任务 ====================
+
+    async def _advance_cycle_weeks(self):
+        """每日检查并推进所有活跃训练周期的 current_week"""
+        profiles = db.get_all_active_profiles()
+        seen_cycles = set()
+        for p in profiles:
+            user_id = p["user_id"]
+            group_id = p["group_id"]
+            try:
+                cycle = db.get_active_cycle(user_id, group_id)
+                if not cycle or cycle.id in seen_cycles:
+                    continue
+                seen_cycles.add(cycle.id)
+                # 计算当前应该是第几周
+                start = date.fromisoformat(cycle.start_date)
+                today = date.today()
+                elapsed_weeks = (today - start).days // 7 + 1
+                elapsed_weeks = max(1, min(elapsed_weeks, cycle.total_weeks))
+                if elapsed_weeks != cycle.current_week:
+                    if elapsed_weeks > cycle.total_weeks:
+                        db.complete_cycle(cycle.id)
+                    else:
+                        db.update_cycle_week(cycle.id, elapsed_weeks)
+            except Exception as e:
+                logger.debug(f"推进训练周期失败 {user_id}: {e}")
 
     async def _on_saturday_feedback(self):
         """周六体重反馈：向所有已建档用户发送体重询问"""
