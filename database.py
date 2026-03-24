@@ -404,6 +404,8 @@ def get_upcoming_plans(user_id: str, group_id: str, days: int = 7) -> list:
         conn.close()
 
 
+
+
 def get_all_profiles_in_group(group_id: str) -> list:
     """获取群内所有用户档案（用于批量提醒）"""
     conn = get_conn()
@@ -677,5 +679,39 @@ def get_total_checkins(user_id: str, group_id: str) -> int:
             (user_id, group_id)
         ).fetchone()
         return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def delete_plans_in_range(user_id: str, group_id: str, start_date: str, end_date: str) -> int:
+    """删除指定日期范围内的训练计划，返回删除条数"""
+    conn = get_conn()
+    try:
+        cursor = conn.execute(
+            "DELETE FROM training_plans WHERE user_id=? AND group_id=? AND plan_date>=? AND plan_date<=?",
+            (user_id, group_id, start_date, end_date)
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def delete_profile(user_id: str, group_id: str) -> bool:
+    """删除用户档案及所有关联数据"""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM user_profiles WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM checkin_records WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM training_plans WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM training_cycles WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM weight_records WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM diet_records WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM achievements WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.execute("DELETE FROM user_portraits WHERE user_id=? AND group_id=?", (user_id, group_id))
+        conn.commit()
+        return True
+    except Exception:
+        return False
     finally:
         conn.close()

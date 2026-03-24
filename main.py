@@ -45,7 +45,7 @@ def _parse_enabled_groups(raw) -> set:
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.5",
+    "2.0.6",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -873,8 +873,8 @@ class FitnessCoachPlugin(Star):
         '''保存或更新用户某天的训练计划，如果该日期已有计划会覆盖。
 
         Args:
-            workout_type(string): 训练类型
-            workout_detail(string): 详细训练内容
+            workout_type(string): 训练类型，如"力量""有氧""拉伸""混合""休息"
+            workout_detail(string): 详细训练内容，必须包含具体动作名称、每个动作的组数和次数/时长。格式示例："1.杠铃深蹲 4组x8次 2.罗马尼亚硬拉 3组x10次 3.腿举 3组x12次 4.腿弯举 3组x12次 5.小腿提踵 4组x15次"。绝对不能只写笼统分类如"背/二头"，必须写出每个具体动作。
             plan_date(string): 计划日期YYYY-MM-DD，默认今天
             intensity(string): 强度 low/normal/high
             is_rest_day(boolean): 是否休息日
@@ -928,6 +928,133 @@ class FitnessCoachPlugin(Star):
         ok = await set_qq_group_title(event, user_id, title)
         msg = f"群头衔设置{'成功' if ok else '失败(需要机器人是群主)'}：{title}"
         return msg
+
+    # ==================== 智能操作工具（LLM 口语化调用） ====================
+
+    @filter.llm_tool(name="get_weekly_plans")
+    async def tool_get_weekly_plans(self, event: AstrMessageEvent, days: int = 7):
+        '''查询用户未来几天的训练计划安排，用于查看、调整或重新安排计划。
+
+        Args:
+            days(number): 查询未来多少天的计划，默认7
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        plans = db.get_upcoming_plans(user_id, group_id, days=int(days))
+        if not plans:
+            return f"未来{days}天没有训练计划。"
+        items = []
+        for p in plans:
+            day_type = "🛌休息日" if p.is_rest_day else p.workout_type
+            items.append({"date": p.plan_date, "type": day_type, "detail": p.workout_detail, "intensity": p.intensity})
+        return json.dumps({"plans": items, "total": len(items)}, ensure_ascii=False)
+
+    @filter.llm_tool(name="delete_training_plans")
+    async def tool_delete_training_plans(self, event: AstrMessageEvent, start_date: str, end_date: str):
+        '''删除指定日期范围内的训练计划，用于用户想重新安排计划时先清除旧计划。
+
+        Args:
+            start_date(string): 开始日期 YYYY-MM-DD
+            end_date(string): 结束日期 YYYY-MM-DD
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        deleted = db.delete_plans_in_range(user_id, group_id, start_date, end_date)
+        return f"已删除 {start_date} 至 {end_date} 的 {deleted} 条训练计划。"
+
+    @filter.llm_tool(name="reset_quest")
+    async def tool_reset_quest(self, event: AstrMessageEvent, quest_days: int = 0):
+        '''重置用户的闯关任务进度，可选择新的闯关天数。用于用户想换闯关任务或重新开始。
+
+        Args:
+            quest_days(number): 新的闯关天数(3/7/30)，传0表示仅重置进度不换任务
+        '''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        profile = db.get_profile(user_id, group_id)
+        if not profile:
+            return "用户尚未建档，无法重置闯关。"
+        profile.quest_progress = 0
+        if quest_days in (3, 7, 30):
+            profile.quest_days = quest_days
+        db.save_profile(profile)
+        return json.dumps({
+            "quest_days": profile.quest_days,
+            "quest_progress": 0,
+            "message": f"闯关已重置为{profile.quest_days}天任务，进度归零。"
+        }, ensure_ascii=False)
+
+    @filter.llm_tool(name="get_full_analysis")
+    async def tool_get_full_analysis(self, event: AstrMessageEvent):
+        '''获取用户的完整综合分析数据，包括档案、画像、打卡统计、训练周期概览。用于用户问"帮我分析一下"或需要全面了解用户状态时。'''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        profile = db.get_profile(user_id, group_id)
+        if not profile:
+            return "用户尚未建档。"
+        # 画像
+        portrait = db.get_portrait(user_id, group_id)
+        portrait_data = {}
+        if portrait:
+            portrait_data = {
+                "weight_trend": portrait.weight_trend, "avg_duration": portrait.avg_duration,
+                "preferred_time": portrait.preferred_time, "strong_areas": portrait.strong_areas,
+                "weak_areas": portrait.weak_areas, "recovery_score": portrait.recovery_score,
+            }
+        # 打卡统计
+        history = db.get_checkin_history(user_id, group_id, days=30)
+        streak = db.get_checkin_streak(user_id, group_id)
+        total_all = db.get_total_checkins(user_id, group_id)
+        # 周期
+        cycle = db.get_active_cycle(user_id, group_id)
+        cycle_data = {}
+        if cycle:
+            cycle_data = {
+                "total_weeks": cycle.total_weeks, "current_week": cycle.current_week,
+                "phase": cycle.phase, "deload_week": cycle.deload_week,
+            }
+        result = {
+            "profile": {
+                "nickname": profile.nickname, "height": profile.height, "weight": profile.weight,
+                "age": profile.age, "gender": profile.gender, "fitness_goal": profile.fitness_goal,
+                "body_type": profile.body_type, "equipment": profile.equipment,
+                "level": profile.level, "exp": profile.exp, "title": profile.title,
+                "streak": profile.streak, "quest_days": profile.quest_days,
+                "quest_progress": profile.quest_progress, "ai_analysis": profile.ai_analysis,
+                "current_status": profile.current_status,
+            },
+            "portrait": portrait_data,
+            "checkin_stats": {
+                "streak": streak, "total_all_time": total_all,
+                "last_30_days": len(history),
+                "avg_duration": round(sum(h.get("duration_min", 0) for h in history) / max(len(history), 1), 1),
+            },
+            "cycle": cycle_data,
+        }
+        return json.dumps(result, ensure_ascii=False)
+
+    @filter.llm_tool(name="delete_profile")
+    async def tool_delete_profile(self, event: AstrMessageEvent):
+        '''删除用户的所有数据（档案、打卡、计划、成就等），用于用户想重新建档或彻底清除数据。操作不可逆，调用前请确认用户意图。'''
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        profile = db.get_profile(user_id, group_id)
+        if not profile:
+            return "用户没有档案数据，无需删除。"
+        nickname = profile.nickname
+        # 清除建档会话
+        self._onboarding_sessions.pop(user_id, None)
+        # 删除所有数据
+        ok = db.delete_profile(user_id, group_id)
+        if ok:
+            # 刷新提醒（rebuild 会自动跳过已删除用户）
+            if self.reminder:
+                try:
+                    self.reminder.refresh()
+                except Exception:
+                    pass
+            return f"已删除用户 {nickname} 的所有数据（档案、打卡、计划、成就等）。用户可重新建档。"
+        return "删除失败，请稍后重试。"
 
     # ==================== 进群欢迎 ====================
 
