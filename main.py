@@ -21,7 +21,7 @@ from astrbot import logger
 
 from . import database as db
 from .models import UserProfile, CheckinRecord, TrainingPlan, WeightRecord
-from .tools import set_qq_group_title, roll_random_event
+from .tools import set_qq_group_title, roll_random_event, send_poke
 from .prompts import SYSTEM_PROMPT_FULL, PERSONA_PROMPTS, PROACTIVE_REPLY_PROMPT
 from .reminder import ScheduledReminder
 from .rpg import calc_level, exp_for_next_level, get_title
@@ -620,6 +620,7 @@ class FitnessCoachPlugin(Star):
             "exp_gained": int(total_exp) + ach_exp,
             "streak": streak, "extra_training_context": extra_ctx,
         }, ensure_ascii=False)
+        await send_poke(event, user_id)
         yield event.plain_result(result)
 
     @filter.llm_tool(name="makeup_checkin")
@@ -1385,6 +1386,7 @@ class FitnessCoachPlugin(Star):
         if existing:
             yield event.plain_result("今天已经打过卡啦，明天继续加油！💪")
             return
+        await send_poke(event, user_id)
         yield event.plain_result(
             "收到！告诉我你今天练了什么吧～\n"
             "比如：'今天做了30分钟跑步和20个俯卧撑，感觉还行'"

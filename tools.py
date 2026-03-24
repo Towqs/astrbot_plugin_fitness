@@ -20,6 +20,22 @@ async def set_qq_group_title(event, user_id: str, title: str) -> bool:
     return False
 
 
+async def send_poke(event, user_id: str) -> bool:
+    """通过 NapCat 扩展 API 发送群聊戳一戳（仅群聊有效）"""
+    try:
+        group_id = event.get_group_id()
+        if not group_id:
+            return False
+        await event.bot.group_poke(
+            group_id=int(group_id),
+            user_id=int(user_id),
+        )
+        return True
+    except Exception as e:
+        logger.debug(f"戳一戳失败: {e}")
+    return False
+
+
 # 随机事件表
 RANDOM_EVENTS = [
     {"name": "暴击训练", "prob": 0.08, "type": "exp_mult", "value": 2,
