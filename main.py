@@ -42,6 +42,10 @@ def _parse_enabled_groups(raw) -> set:
     return set()
 
 
+# 建档会话超时时间（秒）
+ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
+
+
 @register(
     "astrbot_plugin_fitness",
     "FitnessCoach",
@@ -49,10 +53,6 @@ def _parse_enabled_groups(raw) -> set:
     "2.0.7",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
-# 建档会话超时时间（秒）
-ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
-
-
 class FitnessCoachPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
