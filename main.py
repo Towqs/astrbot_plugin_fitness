@@ -12,7 +12,7 @@ import random
 import re
 from datetime import date, timedelta
 
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
 from astrbot.api.provider import ProviderRequest
@@ -221,7 +221,7 @@ class FitnessCoachPlugin(Star):
         wake_time: str = "", sleep_time: str = "",
         preferred_workout_time: str = "",
         reminder_time: str = "", quest_days: int = 0,
-    ) -> MessageEventResult:
+    ):
         '''为用户创建健身档案。在用户提供基本信息后调用，必须提供nickname，其他可选。
 
         Args:
@@ -247,8 +247,7 @@ class FitnessCoachPlugin(Star):
 
         existing = db.get_profile(user_id, group_id)
         if existing and existing.onboarding_step == "complete":
-            yield event.plain_result("该用户已有完整档案，如需更新请直接告诉我要改什么。")
-            return
+            return "该用户已有完整档案，如需更新请直接告诉我要改什么。"
 
         p = existing or UserProfile(user_id=user_id, group_id=group_id)
         fields = {
@@ -292,19 +291,18 @@ class FitnessCoachPlugin(Star):
             except Exception as e:
                 logger.warning(f"自动生成训练周期失败: {e}")
                 cycle_msg = "\n请接下来帮用户生成训练周期，调用 generate_training_cycle 工具。"
-            yield event.plain_result(f"档案已保存。状态: {status}{title_msg}{cycle_msg}")
+            return f"档案已保存。状态: {status}{title_msg}{cycle_msg}"
         else:
-            yield event.plain_result(f"档案已保存。状态: {status}{title_msg}")
+            return f"档案已保存。状态: {status}{title_msg}"
 
     @filter.llm_tool(name="get_profile")
-    async def tool_get_profile(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def tool_get_profile(self, event: AstrMessageEvent):
         '''查询当前用户的健身档案信息，包括基本信息、RPG等级、闯关进度等。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         p = db.get_profile(user_id, group_id)
         if not p:
-            yield event.plain_result("该用户尚未建立健身档案。")
-            return
+            return "该用户尚未建立健身档案。"
         streak = db.get_checkin_streak(user_id, group_id)
         title = get_title(p.level)
         result = json.dumps({
@@ -327,7 +325,7 @@ class FitnessCoachPlugin(Star):
             "streak": streak, "onboarding_step": p.onboarding_step,
             "ai_analysis": p.ai_analysis,
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="update_status")
     async def tool_update_status(
@@ -343,7 +341,7 @@ class FitnessCoachPlugin(Star):
         diet_habit: str = "", meals_per_day: int = 0,
         protein_intake: str = "", daily_activity: str = "",
         ai_analysis: str = "",
-    ) -> MessageEventResult:
+    ):
         '''更新用户的状态或档案信息。可更新体重、状态、闯关任务、提醒时间、训练背景、饮食习惯等。在日常对话中了解到用户新信息时主动调用。
 
         Args:
@@ -372,8 +370,7 @@ class FitnessCoachPlugin(Star):
         group_id = str(event.unified_msg_origin)
         p = db.get_profile(user_id, group_id)
         if not p:
-            yield event.plain_result("用户尚未建档，请先创建档案。")
-            return
+            return "用户尚未建档，请先创建档案。"
 
         updated = []
 
@@ -434,7 +431,7 @@ class FitnessCoachPlugin(Star):
 
         db.save_profile(p)
         msg = f"已更新: {', '.join(updated)}" if updated else "没有需要更新的字段。"
-        yield event.plain_result(msg)
+        return msg
 
     @filter.llm_tool(name="record_checkin")
     async def tool_record_checkin(
@@ -442,7 +439,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
-    ) -> MessageEventResult:
+    ):
         '''记录用户健身打卡。自动计算经验值、触发随机事件、检查升级和闯关进度。
 
         Args:
@@ -457,14 +454,12 @@ class FitnessCoachPlugin(Star):
         group_id = str(event.unified_msg_origin)
         p = db.get_profile(user_id, group_id)
         if not p:
-            yield event.plain_result("用户尚未建档，请先创建档案。")
-            return
+            return "用户尚未建档，请先创建档案。"
 
         today = date.today().isoformat()
         existing = db.get_today_checkin(user_id, group_id)
         if existing:
-            yield event.plain_result("今天已经打过卡了，明天继续加油！")
-            return
+            return "今天已经打过卡了，明天继续加油！"
 
         record = CheckinRecord(
             user_id=user_id, group_id=group_id, checkin_date=today,
@@ -621,7 +616,7 @@ class FitnessCoachPlugin(Star):
             "streak": streak, "extra_training_context": extra_ctx,
         }, ensure_ascii=False)
         await send_poke(event, user_id)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="makeup_checkin")
     async def tool_makeup_checkin(
@@ -629,7 +624,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
-    ) -> MessageEventResult:
+    ):
         '''补卡：记录昨天忘记打卡的训练，经验值减半。仅支持补前一天的卡。
 
         Args:
@@ -644,8 +639,7 @@ class FitnessCoachPlugin(Star):
         group_id = str(event.unified_msg_origin)
         p = db.get_profile(user_id, group_id)
         if not p:
-            yield event.plain_result("用户尚未建档，请先创建档案。")
-            return
+            return "用户尚未建档，请先创建档案。"
 
         yesterday = (date.today() - timedelta(days=1)).isoformat()
 
@@ -660,8 +654,7 @@ class FitnessCoachPlugin(Star):
             conn.close()
 
         if row:
-            yield event.plain_result("昨天已有打卡记录，无需补卡。")
-            return
+            return "昨天已有打卡记录，无需补卡。"
 
         # 创建昨天的打卡记录
         record = CheckinRecord(
@@ -740,7 +733,7 @@ class FitnessCoachPlugin(Star):
             "quest_msg": quest_msg,
             "achievements": ach_msg,
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     # ==================== v2.0 新增 LLM Tools ====================
 
@@ -749,7 +742,7 @@ class FitnessCoachPlugin(Star):
         self, event: AstrMessageEvent,
         description: str, meal_type: str,
         calories_est: int, protein_est: float,
-    ) -> MessageEventResult:
+    ):
         '''记录用户的饮食打卡。AI 根据用户描述估算热量和蛋白质后调用。
 
         Args:
@@ -759,8 +752,7 @@ class FitnessCoachPlugin(Star):
             protein_est(number): 估算蛋白质(克)
         '''
         if not self.diet_log_enabled:
-            yield event.plain_result("饮食打卡功能已关闭。")
-            return
+            return "饮食打卡功能已关闭。"
 
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -768,8 +760,7 @@ class FitnessCoachPlugin(Star):
         # 检查用户是否已建档
         p = db.get_profile(user_id, group_id)
         if not p:
-            yield event.plain_result("用户尚未建档，请先创建档案。")
-            return
+            return "用户尚未建档，请先创建档案。"
 
         record = self.diet_logger.log_meal(
             user_id, group_id, description, meal_type,
@@ -793,10 +784,10 @@ class FitnessCoachPlugin(Star):
             "protein": protein_est,
             "achievements": ach_msg,
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="get_diet_summary")
-    async def tool_get_diet_summary(self, event: AstrMessageEvent, log_date: str = "") -> MessageEventResult:
+    async def tool_get_diet_summary(self, event: AstrMessageEvent, log_date: str = ""):
         '''查询用户某日的饮食汇总，默认今天。
 
         Args:
@@ -805,12 +796,12 @@ class FitnessCoachPlugin(Star):
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         summary = self.diet_logger.get_daily_summary(user_id, group_id, log_date)
-        yield event.plain_result(json.dumps(summary, ensure_ascii=False))
+        return json.dumps(summary, ensure_ascii=False)
 
     @filter.llm_tool(name="generate_training_cycle")
     async def tool_generate_training_cycle(
         self, event: AstrMessageEvent, weeks: int = 4,
-    ) -> MessageEventResult:
+    ):
         '''为用户生成周期化训练计划（4-8周），包含渐进超负荷和去负荷周。
 
         Args:
@@ -825,54 +816,51 @@ class FitnessCoachPlugin(Star):
             "total_days": len(plans),
             "overview": overview,
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="get_cycle_overview")
-    async def tool_get_cycle_overview(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def tool_get_cycle_overview(self, event: AstrMessageEvent):
         '''查看用户当前训练周期概览：阶段、本周重点、剩余周数。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         overview = self.periodization_engine.get_cycle_overview(user_id, group_id)
         if not overview:
-            yield event.plain_result("当前没有活跃的训练周期，可以让我帮你生成一个。")
-            return
-        yield event.plain_result(json.dumps(overview, ensure_ascii=False))
+            return "当前没有活跃的训练周期，可以让我帮你生成一个。"
+        return json.dumps(overview, ensure_ascii=False)
 
     @filter.llm_tool(name="get_progress_report")
-    async def tool_get_progress_report(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def tool_get_progress_report(self, event: AstrMessageEvent):
         '''生成用户的进步报告，对比近期和之前的训练数据。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         report = self.progress_detector.generate_report(user_id, group_id)
-        yield event.plain_result(report)
+        return report
 
     @filter.llm_tool(name="get_achievements")
-    async def tool_get_achievements(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def tool_get_achievements(self, event: AstrMessageEvent):
         '''查询用户已解锁的成就列表。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         unlocked = self.achievement_system.get_unlocked(user_id, group_id)
         if not unlocked:
-            yield event.plain_result("还没有解锁任何成就，继续加油！")
-            return
-        yield event.plain_result(json.dumps(unlocked, ensure_ascii=False))
+            return "还没有解锁任何成就，继续加油！"
+        return json.dumps(unlocked, ensure_ascii=False)
 
     @filter.llm_tool(name="get_today_plan")
-    async def tool_get_today_plan(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def tool_get_today_plan(self, event: AstrMessageEvent):
         '''查询用户今天的训练计划。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         plan = db.get_today_plan(user_id, group_id)
         if not plan:
-            yield event.plain_result("今天还没有训练计划。")
-            return
+            return "今天还没有训练计划。"
         result = json.dumps({
             "plan_date": plan.plan_date, "workout_type": plan.workout_type,
             "workout_detail": plan.workout_detail, "intensity": plan.intensity,
             "is_rest_day": plan.is_rest_day, "adjusted": plan.adjusted,
             "adjust_reason": plan.adjust_reason,
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="save_training_plan")
     async def tool_save_training_plan(
@@ -881,7 +869,7 @@ class FitnessCoachPlugin(Star):
         plan_date: str = "", intensity: str = "normal",
         is_rest_day: bool = False, adjusted: bool = False,
         adjust_reason: str = "",
-    ) -> MessageEventResult:
+    ):
         '''保存或更新用户某天的训练计划，如果该日期已有计划会覆盖。
 
         Args:
@@ -904,10 +892,10 @@ class FitnessCoachPlugin(Star):
         )
         db.save_plan(plan)
         day_type = "休息日" if is_rest_day else workout_type
-        yield event.plain_result(f"训练计划已保存: {plan.plan_date} - {day_type}")
+        return f"训练计划已保存: {plan.plan_date} - {day_type}"
 
     @filter.llm_tool(name="get_checkin_stats")
-    async def tool_get_checkin_stats(self, event: AstrMessageEvent, days: int = 30) -> MessageEventResult:
+    async def tool_get_checkin_stats(self, event: AstrMessageEvent, days: int = 30):
         '''查询用户最近的打卡统计数据，包括连续天数、历史记录等。
 
         Args:
@@ -926,10 +914,10 @@ class FitnessCoachPlugin(Star):
             "avg_duration_min": round(total_dur / max(total, 1), 1),
             "recent_records": history[:5],
         }, ensure_ascii=False)
-        yield event.plain_result(result)
+        return result
 
     @filter.llm_tool(name="set_qq_title")
-    async def tool_set_qq_title(self, event: AstrMessageEvent, title: str) -> MessageEventResult:
+    async def tool_set_qq_title(self, event: AstrMessageEvent, title: str):
         '''手动设置用户的QQ群专属头衔，通常升级时自动设置，此工具用于手动修正。
 
         Args:
@@ -939,7 +927,7 @@ class FitnessCoachPlugin(Star):
         group_id = str(event.unified_msg_origin)
         ok = await set_qq_group_title(event, user_id, title)
         msg = f"群头衔设置{'成功' if ok else '失败(需要机器人是群主)'}：{title}"
-        yield event.plain_result(msg)
+        return msg
 
     # ==================== 进群欢迎 ====================
 

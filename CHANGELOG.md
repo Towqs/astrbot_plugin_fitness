@@ -3,8 +3,10 @@
 ## v2.0.5
 
 ### Bug 修复
-- 修复所有 @llm_tool 工具返回"没有返回值"的严重 bug：为全部16个 LLM 工具方法添加 `-> MessageEventResult` 返回类型注解，适配 AstrBot v4.22.0 的 tool runner
-- 此 bug 导致 LLM 无法获取工具返回的数据（档案、计划、打卡结果等），进而引发训练计划目标不明确、数据展示异常等连锁问题
+- 修复所有 @llm_tool 工具返回"没有返回值"的严重 bug：将全部16个 LLM 工具方法从 `yield event.plain_result()` 生成器模式改为 `return` 协程模式
+- 根因：AstrBot v4.22.0 的 tool executor 对 `yield event.plain_result()` 返回的 `MessageEventResult` 会走"直接发送给用户"分支，导致 tool runner 收到 `None`，无法将工具结果传回 LLM
+- 改为 `return "字符串"` 后，executor 走协程分支，正确包装为 `CallToolResult` 返回给 LLM
+- 此 bug 导致 LLM 无法获取工具返回数据（档案、计划、打卡结果等），引发训练计划目标不明确、数据展示异常等连锁问题
 
 ## v2.0.4
 
