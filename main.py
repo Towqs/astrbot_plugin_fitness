@@ -1837,3 +1837,18 @@ class FitnessCoachPlugin(Star):
             )
 
         yield event.plain_result("\n".join(lines))
+
+    async def terminate(self):
+        """插件卸载/停用时调用，关闭定时任务调度器防止重复发送"""
+        if self.reminder:
+            self.reminder.stop()
+            self.reminder = None
+        logger.info("智能健身教练插件已卸载，定时任务已停止")
+
+    async def terminate(self):
+        """插件卸载/停用时调用，关闭定时任务调度器防止重复发送"""
+        if self.reminder:
+            self.reminder.stop()
+            self.reminder = None
+        logger.info("智能健身教练插件已卸载，定时任务已停止")
+

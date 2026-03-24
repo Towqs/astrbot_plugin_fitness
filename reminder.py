@@ -62,6 +62,13 @@ class ScheduledReminder:
         if not AsyncIOScheduler or not CronTrigger:
             logger.warning("APScheduler 不可用，提醒服务未启动")
             return
+        # 防止重复启动：先关闭已有的调度器
+        if self._scheduler:
+            try:
+                self._scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+            self._scheduler = None
         self._scheduler = AsyncIOScheduler()
         self._scheduler.start()
         self._scheduler.add_job(
@@ -201,6 +208,11 @@ class ScheduledReminder:
                 reminder_key = f"{user_id}:{group_id}"
 
                 if reminder_key in self._reminded_today:
+                    continue
+
+                # 晨间推送已发过，跳过打卡提醒避免重复
+                if reminder_key in self._briefed_today:
+                    self._reminded_today.add(reminder_key)
                     continue
 
                 # 先标记，防止重复发送
@@ -456,6 +468,10 @@ class ScheduledReminder:
             if key in self._briefed_today:
                 continue
             self._briefed_today.add(key)
+
+            # 打卡提醒已发过，跳过晨间推送避免重复
+            if key in self._reminded_today:
+                continue
 
             if p.get("current_status", "normal") in ("sick", "injured"):
                 continue
