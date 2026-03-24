@@ -43,6 +43,7 @@ class ScheduledReminder:
         self._last_date: str = ""
         self._weekly_report_gen = WeeklyReportGenerator()
         self._periodization_engine = PeriodizationEngine()
+        self._remind_lock = False  # 防止并发重复发送
 
     def start(self):
         if not AsyncIOScheduler or not CronTrigger:
@@ -108,17 +109,18 @@ class ScheduledReminder:
 
     def _rebuild_jobs(self):
         """从数据库读取所有提醒时间，按时间点分组注册 cron job"""
-        for job in self._scheduler.get_jobs():
-            if job.name.startswith("fitness_remind_"):
-                job.remove()
+        # 先移除所有旧的提醒 job
+        jobs_to_remove = [job for job in self._scheduler.get_jobs()
+                          if job.name.startswith("fitness_remind_")]
+        for job in jobs_to_remove:
+            job.remove()
 
         profiles = db.get_all_active_profiles()
-        time_groups = {}
+        time_groups = set()
         for p in profiles:
             rt = p.get("reminder_time", "")
-            if not rt or ":" not in rt:
-                continue
-            time_groups.setdefault(rt, [])
+            if rt and ":" in rt:
+                time_groups.add(rt)
 
         for time_str in time_groups:
             try:
@@ -129,6 +131,7 @@ class ScheduledReminder:
                     args=[time_str],
                     name=f"fitness_remind_{time_str}",
                     misfire_grace_time=120,
+                    max_instances=1,  # 防止同一 job 并发执行
                 )
             except Exception as e:
                 logger.warning(f"注册提醒任务 {time_str} 失败: {e}")
@@ -144,35 +147,42 @@ class ScheduledReminder:
 
     async def _on_remind_tick(self, time_str: str):
         """某个时间点触发，查找该时间的所有用户并发送提醒"""
-        today = date.today().isoformat()
-        if today != self._last_date:
-            self._reminded_today.clear()
-            self._last_date = today
+        # 防止并发重复执行
+        if self._remind_lock:
+            return
+        self._remind_lock = True
+        try:
+            today = date.today().isoformat()
+            if today != self._last_date:
+                self._reminded_today.clear()
+                self._last_date = today
 
-        profiles = db.get_profiles_by_reminder_time(time_str)
+            profiles = db.get_profiles_by_reminder_time(time_str)
 
-        for p in profiles:
-            user_id = p["user_id"]
-            group_id = p["group_id"]
-            reminder_key = f"{user_id}:{group_id}"
+            for p in profiles:
+                user_id = p["user_id"]
+                group_id = p["group_id"]
+                reminder_key = f"{user_id}:{group_id}"
 
-            if reminder_key in self._reminded_today:
-                continue
+                if reminder_key in self._reminded_today:
+                    continue
 
-            checkin = db.get_today_checkin(user_id, group_id)
-            if checkin:
+                # 先标记，防止重复发送
                 self._reminded_today.add(reminder_key)
-                continue
 
-            if p.get("current_status", "normal") in ("sick", "injured", "rest"):
-                self._reminded_today.add(reminder_key)
-                continue
+                checkin = db.get_today_checkin(user_id, group_id)
+                if checkin:
+                    continue
 
-            # 生成提醒消息
-            msg = await self._build_reminder_msg(p)
-            await self._send_group_message(group_id, user_id, msg)
-            self._reminded_today.add(reminder_key)
-            logger.info(f"已发送打卡提醒给 {p.get('nickname', user_id)}({user_id})")
+                if p.get("current_status", "normal") in ("sick", "injured", "rest"):
+                    continue
+
+                # 生成提醒消息
+                msg = await self._build_reminder_msg(p)
+                await self._send_group_message(group_id, user_id, msg)
+                logger.info(f"已发送打卡提醒给 {p.get('nickname', user_id)}({user_id})")
+        finally:
+            self._remind_lock = False
 
     async def _build_reminder_msg(self, p: dict) -> str:
         """构建提醒消息：有低成本模型走AI，否则纯模板"""

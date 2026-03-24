@@ -44,7 +44,7 @@ def _parse_enabled_groups(raw) -> set:
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复",
-    "2.0.2",
+    "2.0.3",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -272,7 +272,18 @@ class FitnessCoachPlugin(Star):
         # 建档完成后刷新提醒调度（新用户加入）
         if p.onboarding_step == "complete" and self.reminder:
             self.reminder.refresh()
-        yield event.plain_result(f"档案已保存。状态: {status}{title_msg}")
+
+        if p.onboarding_step == "complete":
+            # 自动生成首个训练周期
+            try:
+                plans = self.periodization_engine.generate_cycle(user_id, group_id, 4)
+                cycle_msg = f"\n已自动生成4周训练周期（共{len(plans)}天计划）。"
+            except Exception as e:
+                logger.warning(f"自动生成训练周期失败: {e}")
+                cycle_msg = "\n请接下来帮用户生成训练周期，调用 generate_training_cycle 工具。"
+            yield event.plain_result(f"档案已保存。状态: {status}{title_msg}{cycle_msg}")
+        else:
+            yield event.plain_result(f"档案已保存。状态: {status}{title_msg}")
 
     @filter.llm_tool(name="get_profile")
     async def tool_get_profile(self, event: AstrMessageEvent):
