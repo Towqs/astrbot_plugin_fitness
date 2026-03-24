@@ -96,6 +96,9 @@ class FitnessCoachPlugin(Star):
         self.progress_detector = ProgressDetector()
         self.periodization_engine = PeriodizationEngine()
 
+        # 私聊建档会话状态: {user_id: {"step": str, "data": dict, "group_id": str, "group_origin": str}}
+        self._onboarding_sessions: dict[str, dict] = {}
+
         logger.info(f"智能健身教练插件已加载 | 群白名单: {self._enabled_groups or '全部'}")
 
     def _is_group_enabled(self, event: AstrMessageEvent) -> bool:
@@ -957,7 +960,7 @@ class FitnessCoachPlugin(Star):
         except Exception:
             nickname = uid
 
-        # 检查是否已有档案
+        # 获取群 ID
         group_id = str(event.unified_msg_origin)
         profile = db.get_profile(uid, group_id)
 
@@ -977,8 +980,7 @@ class FitnessCoachPlugin(Star):
                 f"📝 生成个性化训练计划\n"
                 f"✅ 每日打卡赚经验升级\n"
                 f"⚔️ 闯关任务挑战\n\n"
-                f"@我 说「我想开始健身」就能开始建档～\n"
-                f"或者发送「健身注册」也可以哦！"
+                f"发送「健身注册」开始建档（通过私聊采集信息，保护隐私）～"
             )
 
         await event.send(event.plain_result(msg))
@@ -1046,11 +1048,272 @@ class FitnessCoachPlugin(Star):
         except Exception as e:
             logger.debug(f"主动回复生成失败: {e}")
 
+    # ==================== 私聊建档状态机 ====================
+
+    @filter.event_message_type(EventMessageType.PRIVATE_MESSAGE)
+    async def on_private_onboarding(self, event: AstrMessageEvent):
+        """监听私聊消息，处理建档对话"""
+        user_id = event.get_sender_id()
+        session = self._onboarding_sessions.get(user_id)
+        if not session:
+            return
+
+        msg = event.message_str.strip() if event.message_str else ""
+        if not msg:
+            return
+
+        step = session["step"]
+        data = session["data"]
+
+        try:
+            if step == "height_weight":
+                nums = [s for s in msg.replace("，", " ").replace(",", " ").split() if s]
+                parsed = []
+                for s in nums:
+                    try:
+                        parsed.append(float(s))
+                    except ValueError:
+                        continue
+                if len(parsed) < 2:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 没看懂，请输入身高和体重，用空格隔开\n比如：175 70",
+                    )
+                    return
+                data["height_cm"] = parsed[0]
+                data["weight_kg"] = parsed[1]
+                session["step"] = "age_gender"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message="✅ 收到！\n\n👤 第2步：请告诉我你的年龄和性别\n比如：25 男",
+                )
+
+            elif step == "age_gender":
+                parts = msg.replace("，", " ").replace(",", " ").split()
+                age = 0
+                gender = ""
+                for p in parts:
+                    try:
+                        age = int(p)
+                    except ValueError:
+                        if p in ("男", "male", "m", "M"):
+                            gender = "male"
+                        elif p in ("女", "female", "f", "F"):
+                            gender = "female"
+                if not age or not gender:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 请输入年龄和性别\n比如：25 男",
+                    )
+                    return
+                data["age"] = age
+                data["gender"] = gender
+                session["step"] = "goal"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "✅ 收到！\n\n🎯 第3步：你的健身目标是什么？\n"
+                        "A. 增肌\nB. 减脂\nC. 塑形\nD. 维持健康\n\n"
+                        "直接回复 A/B/C/D 或者打字都行"
+                    ),
+                )
+
+            elif step == "goal":
+                goal_map = {
+                    "a": "增肌", "b": "减脂", "c": "塑形", "d": "维持健康",
+                    "增肌": "增肌", "减脂": "减脂", "塑形": "塑形", "维持健康": "维持健康",
+                }
+                goal = goal_map.get(msg.lower().strip(), "")
+                if not goal:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 请选择 A/B/C/D 或直接输入目标（增肌/减脂/塑形/维持健康）",
+                    )
+                    return
+                data["fitness_goal"] = goal
+                session["step"] = "body_condition"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "✅ 收到！\n\n🏃 第4步：你觉得自己目前的体质如何？\n"
+                        "A. 偏瘦\nB. 正常\nC. 偏胖\nD. 肥胖\n\n"
+                        "直接回复 A/B/C/D 或者打字"
+                    ),
+                )
+
+            elif step == "body_condition":
+                cond_map = {
+                    "a": "偏瘦", "b": "正常", "c": "偏胖", "d": "肥胖",
+                    "偏瘦": "偏瘦", "正常": "正常", "偏胖": "偏胖", "肥胖": "肥胖",
+                }
+                cond = cond_map.get(msg.lower().strip(), "")
+                if not cond:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 请选择 A/B/C/D 或直接输入（偏瘦/正常/偏胖/肥胖）",
+                    )
+                    return
+                data["body_condition"] = cond
+                session["step"] = "equipment"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "✅ 收到！\n\n🏠 第5步：你在哪里锻炼？有什么器材？\n"
+                        "比如：\n"
+                        "- 家里，有哑铃和瑜伽垫\n"
+                        "- 健身房，全器械\n"
+                        "- 没有器材，纯徒手\n\n"
+                        "随便说就行"
+                    ),
+                )
+
+            elif step == "equipment":
+                data["equipment"] = msg
+                session["step"] = "schedule"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "✅ 收到！\n\n⏰ 第6步：你的作息时间\n"
+                        "请告诉我起床时间、睡觉时间、偏好锻炼时间\n"
+                        "比如：7:00 23:00 18:00\n"
+                        "（起床 睡觉 锻炼，用空格隔开）"
+                    ),
+                )
+
+            elif step == "schedule":
+                import re
+                times = re.findall(r'\d{1,2}:\d{2}', msg)
+                if len(times) < 3:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 请输入3个时间（起床 睡觉 锻炼）\n比如：7:00 23:00 18:00",
+                    )
+                    return
+                data["wake_time"] = times[0]
+                data["sleep_time"] = times[1]
+                data["preferred_workout_time"] = times[2]
+                # 建议提醒时间：锻炼前30分钟
+                try:
+                    h, m = map(int, times[2].split(":"))
+                    rm = h * 60 + m - 30
+                    if rm < 0:
+                        rm += 1440
+                    data["reminder_time"] = f"{rm // 60:02d}:{rm % 60:02d}"
+                except Exception:
+                    data["reminder_time"] = "17:30"
+                session["step"] = "quest"
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "✅ 收到！\n\n⚔️ 最后一步：选择你的闯关任务\n"
+                        "A. 3天新手试炼（奖励150经验）\n"
+                        "B. 7天进阶挑战（奖励500经验）\n"
+                        "C. 30天BOSS战（奖励2000经验）\n"
+                        "D. 暂时不选\n\n"
+                        "回复 A/B/C/D"
+                    ),
+                )
+
+            elif step == "quest":
+                quest_map = {"a": 3, "b": 7, "c": 30, "d": 0}
+                q = quest_map.get(msg.lower().strip(), -1)
+                if q == -1:
+                    await event.bot.send_private_msg(
+                        user_id=int(user_id),
+                        message="❌ 请选择 A/B/C/D",
+                    )
+                    return
+                data["quest_days"] = q
+
+                # ===== 建档完成，保存数据 =====
+                group_id = session["group_id"]
+                profile = db.get_profile(user_id, group_id) or UserProfile(
+                    user_id=user_id, group_id=group_id,
+                )
+                profile.nickname = data.get("nickname", profile.nickname)
+                profile.height_cm = data.get("height_cm", 0)
+                profile.weight_kg = data.get("weight_kg", 0)
+                profile.age = data.get("age", 0)
+                profile.gender = data.get("gender", "")
+                profile.fitness_goal = data.get("fitness_goal", "")
+                profile.body_condition = data.get("body_condition", "")
+                profile.equipment = data.get("equipment", "")
+                profile.wake_time = data.get("wake_time", "07:00")
+                profile.sleep_time = data.get("sleep_time", "23:00")
+                profile.preferred_workout_time = data.get("preferred_workout_time", "18:00")
+                profile.reminder_time = data.get("reminder_time", "17:30")
+                profile.quest_days = data.get("quest_days", 0)
+                profile.onboarding_step = "complete"
+                db.save_profile(profile)
+
+                # 生成训练周期
+                cycle_msg = ""
+                try:
+                    plans = self.periodization_engine.generate_cycle(user_id, group_id, 4)
+                    cycle_msg = f"已自动生成4周训练周期（共{len(plans)}天计划）。"
+                except Exception as e:
+                    logger.warning(f"自动生成训练周期失败: {e}")
+
+                # 刷新提醒
+                if self.reminder:
+                    self.reminder.refresh()
+
+                # 清理会话
+                del self._onboarding_sessions[user_id]
+
+                # 私聊通知完成
+                await event.bot.send_private_msg(
+                    user_id=int(user_id),
+                    message=(
+                        "🎉 建档完成！你的健身档案已保存～\n\n"
+                        f"📊 身高: {profile.height_cm}cm | 体重: {profile.weight_kg}kg\n"
+                        f"🎯 目标: {profile.fitness_goal} | 体质: {profile.body_condition}\n"
+                        f"⏰ 每日提醒: {profile.reminder_time}\n"
+                        f"{('⚔️ 闯关: ' + str(profile.quest_days) + '天挑战') if profile.quest_days > 0 else ''}\n"
+                        f"{cycle_msg}\n\n"
+                        "现在回到群里，@我 就可以开始聊天和打卡了！"
+                    ),
+                )
+
+                # 群里通知
+                group_origin = session["group_origin"]
+                try:
+                    # 从 group_origin 提取纯群号
+                    parts = group_origin.split(":")
+                    qq_group_id = int(parts[-1]) if len(parts) >= 3 else int(group_origin)
+                    title = get_title(profile.level)
+                    title_msg = ""
+                    if self.title_sync_enabled:
+                        try:
+                            await event.bot.set_group_special_title(
+                                group_id=qq_group_id,
+                                user_id=int(user_id),
+                                special_title=f"Lv.{profile.level} {title}",
+                                duration=-1,
+                            )
+                            title_msg = f"\n已设置群头衔: Lv.{profile.level} {title}"
+                        except Exception:
+                            pass
+                    await event.bot.send_group_msg(
+                        group_id=qq_group_id,
+                        message=f"🎉 {profile.nickname} 已完成建档！Lv.{profile.level}【{title}】{title_msg}\n欢迎新伙伴加入健身之旅！💪",
+                    )
+                except Exception as e:
+                    logger.warning(f"群内建档通知发送失败: {e}")
+
+        except Exception as e:
+            logger.error(f"私聊建档处理异常: {e}")
+            await event.bot.send_private_msg(
+                user_id=int(user_id),
+                message="😅 出了点问题，请重新在群里发「健身注册」再试一次",
+            )
+            self._onboarding_sessions.pop(user_id, None)
+
     # ==================== 手动指令 (备用) ====================
 
     @filter.command("健身注册")
     async def cmd_register(self, event: AstrMessageEvent):
-        """手动触发建档"""
+        """手动触发建档 — 通过私聊采集隐私数据"""
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
         profile = db.get_profile(user_id, group_id)
@@ -1067,12 +1330,39 @@ class FitnessCoachPlugin(Star):
             )
             db.save_profile(profile)
 
-        yield event.plain_result(
-            f"嗨 {nickname}，欢迎开始你的健身之旅！🏋️\n"
-            "我是你的智能健身教练，先来了解一下你吧～\n\n"
-            "请告诉我你的基本信息：身高（cm）、体重（kg）、年龄和性别？\n"
-            "比如：'我身高175，体重70kg，25岁，男'"
-        )
+        # 初始化私聊建档会话
+        self._onboarding_sessions[user_id] = {
+            "step": "height_weight",
+            "data": {"nickname": nickname},
+            "group_id": group_id,
+            "group_origin": group_id,
+        }
+
+        # 尝试发送私聊消息
+        try:
+            await event.bot.send_private_msg(
+                user_id=int(user_id),
+                message=(
+                    f"嗨 {nickname}，欢迎开始你的健身之旅！🏋️\n"
+                    "我是你的智能健身教练，接下来在私聊里完成建档，保护你的隐私～\n\n"
+                    "📏 第1步：请告诉我你的身高(cm)和体重(kg)\n"
+                    "比如：175 70"
+                ),
+            )
+            yield event.plain_result(
+                f"📩 已私聊 {nickname}，请在私聊中完成建档～\n"
+                "（如果没收到私聊，请先加机器人为好友）"
+            )
+        except Exception as e:
+            logger.warning(f"发送私聊建档消息失败: {e}")
+            # 私聊失败，回退到群内建档
+            del self._onboarding_sessions[user_id]
+            yield event.plain_result(
+                f"嗨 {nickname}，欢迎开始你的健身之旅！🏋️\n"
+                "我是你的智能健身教练，先来了解一下你吧～\n\n"
+                "请告诉我你的基本信息：身高（cm）、体重（kg）、年龄和性别？\n"
+                "比如：'我身高175，体重70kg，25岁，男'"
+            )
 
     @filter.command("打卡")
     async def cmd_checkin(self, event: AstrMessageEvent):
