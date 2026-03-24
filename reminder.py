@@ -239,6 +239,7 @@ class ScheduledReminder:
         )
 
         # 通过 AstrBot 的 context.llm_generate 调用低成本模型
+        logger.debug(f"[模型路由] 打卡提醒 → {self.lite_provider_id}")
         resp = await self.context.llm_generate(
             chat_provider_id=self.lite_provider_id,
             prompt=prompt,
@@ -350,6 +351,7 @@ class ScheduledReminder:
                             f"打卡率: {stats.get('checkin_rate', 0)}%\n"
                             f"要求：鼓励为主，简洁有力，带1-2个emoji"
                         )
+                        logger.debug(f"[模型路由] 周报评语 → {self.lite_provider_id}")
                         resp = await self.context.llm_generate(
                             chat_provider_id=self.lite_provider_id,
                             prompt=prompt,

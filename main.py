@@ -100,7 +100,9 @@ class FitnessCoachPlugin(Star):
         # 私聊建档会话状态: {user_id: {"step": str, "data": dict, "group_id": str, "group_origin": str}}
         self._onboarding_sessions: dict[str, dict] = {}
 
-        logger.info(f"智能健身教练插件已加载 | 群白名单: {self._enabled_groups or '全部'}")
+        chat_label = self.chat_provider_id or "默认"
+        lite_label = self.lite_provider_id or "未配置"
+        logger.info(f"智能健身教练插件已加载 | 群白名单: {self._enabled_groups or '全部'} | 主模型: {chat_label} | 轻量模型: {lite_label}")
 
     def _is_group_enabled(self, event: AstrMessageEvent) -> bool:
         """检查当前群是否在白名单中"""
@@ -203,6 +205,7 @@ class FitnessCoachPlugin(Star):
         # 如果配置了指定模型，覆盖 provider
         if self.chat_provider_id:
             req.provider_id = self.chat_provider_id
+            logger.debug(f"[模型路由] 主对话 → {self.chat_provider_id}")
 
     # ==================== LLM Tools (装饰器模式) ====================
 
@@ -1041,6 +1044,7 @@ class FitnessCoachPlugin(Star):
 
         # 用低成本模型生成回复
         provider_id = self.lite_provider_id or self.chat_provider_id
+        logger.debug(f"[模型路由] 主动回复 → {provider_id}")
         try:
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
