@@ -9,6 +9,7 @@
 """
 import json
 import random
+import re
 from datetime import date, timedelta
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -43,8 +44,8 @@ def _parse_enabled_groups(raw) -> set:
 @register(
     "astrbot_plugin_fitness",
     "FitnessCoach",
-    "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复",
-    "2.0.3",
+    "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
+    "2.0.4",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -192,6 +193,10 @@ class FitnessCoachPlugin(Star):
                     fitness_prompt += f"- 最近反馈: {portrait.weekly_feedback}\n"
         else:
             fitness_prompt += "\n\n## 当前用户还没有建立健身档案，请引导用户建档。\n"
+
+        # 如果用户正在私聊建档中，提示 LLM 不要重复引导
+        if user_id in self._onboarding_sessions:
+            fitness_prompt += "\n\n## 注意：该用户正在私聊中完成建档，不要在群里重复引导建档流程。\n"
 
         req.system_prompt = fitness_prompt + "\n\n" + (req.system_prompt or "")
 
@@ -1058,6 +1063,9 @@ class FitnessCoachPlugin(Star):
         if not session:
             return
 
+        # 拦截消息，不让它继续传播到 LLM 流程
+        event.stop_event()
+
         msg = event.message_str.strip() if event.message_str else ""
         if not msg:
             return
@@ -1181,7 +1189,6 @@ class FitnessCoachPlugin(Star):
                 )
 
             elif step == "schedule":
-                import re
                 times = re.findall(r'\d{1,2}:\d{2}', msg)
                 if len(times) < 3:
                     await event.bot.send_private_msg(
@@ -1262,6 +1269,8 @@ class FitnessCoachPlugin(Star):
                 del self._onboarding_sessions[user_id]
 
                 # 私聊通知完成
+                quest_line = f"⚔️ 闯关: {profile.quest_days}天挑战\n" if profile.quest_days > 0 else ""
+                cycle_line = f"{cycle_msg}\n" if cycle_msg else ""
                 await event.bot.send_private_msg(
                     user_id=int(user_id),
                     message=(
@@ -1269,8 +1278,7 @@ class FitnessCoachPlugin(Star):
                         f"📊 身高: {profile.height_cm}cm | 体重: {profile.weight_kg}kg\n"
                         f"🎯 目标: {profile.fitness_goal} | 体质: {profile.body_condition}\n"
                         f"⏰ 每日提醒: {profile.reminder_time}\n"
-                        f"{('⚔️ 闯关: ' + str(profile.quest_days) + '天挑战') if profile.quest_days > 0 else ''}\n"
-                        f"{cycle_msg}\n\n"
+                        f"{quest_line}{cycle_line}\n"
                         "现在回到群里，@我 就可以开始聊天和打卡了！"
                     ),
                 )
