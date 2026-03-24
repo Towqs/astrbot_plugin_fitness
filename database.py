@@ -682,6 +682,19 @@ def get_total_checkins(user_id: str, group_id: str) -> int:
     finally:
         conn.close()
 
+def get_checkin_by_date(user_id: str, group_id: str, checkin_date: str) -> bool:
+    """检查指定日期是否存在打卡记录，返回 True/False"""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM checkin_records WHERE user_id=? AND group_id=? AND checkin_date=?",
+            (user_id, group_id, checkin_date)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 
 def delete_plans_in_range(user_id: str, group_id: str, start_date: str, end_date: str) -> int:
     """删除指定日期范围内的训练计划，返回删除条数"""

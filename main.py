@@ -10,6 +10,7 @@
 import json
 import random
 import re
+import time
 from datetime import date, timedelta
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -45,9 +46,13 @@ def _parse_enabled_groups(raw) -> set:
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.6",
+    "2.0.7",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
+# 建档会话超时时间（秒）
+ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
+
+
 class FitnessCoachPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -112,6 +117,16 @@ class FitnessCoachPlugin(Star):
         parts = group_id.split(":")
         qq_group_id = parts[-1] if len(parts) >= 3 else group_id
         return qq_group_id in self._enabled_groups
+
+    def _cleanup_expired_sessions(self) -> None:
+        """移除超过 TTL 的建档会话"""
+        now = time.time()
+        expired = [
+            uid for uid, session in self._onboarding_sessions.items()
+            if now - session.get("created_at", 0) > ONBOARDING_TIMEOUT_SECONDS
+        ]
+        for uid in expired:
+            del self._onboarding_sessions[uid]
 
     # ==================== LLM 系统提示注入 ====================
 
@@ -644,16 +659,7 @@ class FitnessCoachPlugin(Star):
         yesterday = (date.today() - timedelta(days=1)).isoformat()
 
         # 检查昨天是否已有打卡
-        conn = db.get_conn()
-        try:
-            row = conn.execute(
-                "SELECT 1 FROM checkin_records WHERE user_id=? AND group_id=? AND checkin_date=?",
-                (user_id, group_id, yesterday)
-            ).fetchone()
-        finally:
-            conn.close()
-
-        if row:
+        if db.get_checkin_by_date(user_id, group_id, yesterday):
             return "昨天已有打卡记录，无需补卡。"
 
         # 创建昨天的打卡记录
@@ -997,9 +1003,12 @@ class FitnessCoachPlugin(Star):
         portrait_data = {}
         if portrait:
             portrait_data = {
-                "weight_trend": portrait.weight_trend, "avg_duration": portrait.avg_duration,
-                "preferred_time": portrait.preferred_time, "strong_areas": portrait.strong_areas,
-                "weak_areas": portrait.weak_areas, "recovery_score": portrait.recovery_score,
+                "weight_trend": portrait.weight_trend,
+                "training_preference": portrait.training_preference,
+                "recovery_score": portrait.recovery_score,
+                "progress_speed": portrait.progress_speed,
+                "fatigue_score": portrait.fatigue_score,
+                "weekly_feedback": portrait.weekly_feedback,
             }
         # 打卡统计
         history = db.get_checkin_history(user_id, group_id, days=30)
@@ -1011,15 +1020,17 @@ class FitnessCoachPlugin(Star):
         if cycle:
             cycle_data = {
                 "total_weeks": cycle.total_weeks, "current_week": cycle.current_week,
-                "phase": cycle.phase, "deload_week": cycle.deload_week,
+                "cycle_type": cycle.cycle_type, "deload_week": cycle.deload_week,
             }
+        title = get_title(profile.level)
         result = {
             "profile": {
-                "nickname": profile.nickname, "height": profile.height, "weight": profile.weight,
-                "age": profile.age, "gender": profile.gender, "fitness_goal": profile.fitness_goal,
-                "body_type": profile.body_type, "equipment": profile.equipment,
-                "level": profile.level, "exp": profile.exp, "title": profile.title,
-                "streak": profile.streak, "quest_days": profile.quest_days,
+                "nickname": profile.nickname, "height_cm": profile.height_cm,
+                "weight_kg": profile.weight_kg, "age": profile.age,
+                "gender": profile.gender, "fitness_goal": profile.fitness_goal,
+                "body_condition": profile.body_condition, "equipment": profile.equipment,
+                "level": profile.level, "exp": profile.exp, "title": title,
+                "streak": streak, "quest_days": profile.quest_days,
                 "quest_progress": profile.quest_progress, "ai_analysis": profile.ai_analysis,
                 "current_status": profile.current_status,
             },
@@ -1179,6 +1190,10 @@ class FitnessCoachPlugin(Star):
     async def on_private_onboarding(self, event: AstrMessageEvent):
         """监听私聊消息，处理建档对话"""
         user_id = event.get_sender_id()
+
+        # 清理过期会话
+        self._cleanup_expired_sessions()
+
         session = self._onboarding_sessions.get(user_id)
         if not session:
             return
@@ -1464,6 +1479,7 @@ class FitnessCoachPlugin(Star):
             "data": {"nickname": nickname},
             "group_id": group_id,
             "group_origin": group_id,
+            "created_at": time.time(),
         }
 
         # 尝试发送私聊消息
@@ -1673,16 +1689,7 @@ class FitnessCoachPlugin(Star):
         yesterday = (date.today() - timedelta(days=1)).isoformat()
 
         # 检查昨天是否已有打卡
-        conn = db.get_conn()
-        try:
-            row = conn.execute(
-                "SELECT 1 FROM checkin_records WHERE user_id=? AND group_id=? AND checkin_date=?",
-                (user_id, group_id, yesterday)
-            ).fetchone()
-        finally:
-            conn.close()
-
-        if row:
+        if db.get_checkin_by_date(user_id, group_id, yesterday):
             yield event.plain_result("昨天已有打卡记录，不需要补卡哦～")
             return
 

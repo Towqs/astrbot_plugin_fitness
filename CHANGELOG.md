@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.0.7
+
+### 新功能
+- 训练计划动作模板库：`generate_cycle()` 和 `generate_deload_week()` 现在根据用户器材条件（健身房/家庭哑铃/纯徒手）生成具体动作、组数和次数，而非仅显示"胸/三头"等模糊描述
+- 建档会话 TTL 超时机制：私聊建档会话 30 分钟未完成自动清理，防止内存泄漏
+
+### 优化
+- 提取 `get_checkin_by_date()` 公共函数到 `database.py`，替换 `tool_makeup_checkin()` 和 `cmd_makeup()` 中的重复内联 SQL
+- `roll_random_event()` 添加注释说明单事件返回行为，防止后续误改
+
 ## v2.0.6
 
 ### 新功能

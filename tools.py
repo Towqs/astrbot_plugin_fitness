@@ -52,7 +52,10 @@ RANDOM_EVENTS = [
 
 
 def roll_random_event():
-    """掷骰子触发随机事件，返回事件 dict 或 None"""
+    """掷骰子触发随机事件，返回事件 dict 或 None
+    
+    注意：每次调用最多触发一个事件。遍历事件表时命中第一个即返回，不会叠加。
+    """
     for evt in RANDOM_EVENTS:
         if random.random() < evt["prob"]:
             return evt

@@ -2,7 +2,7 @@ name: astrbot_plugin_fitness
 desc: "智能健身教练插件 v2.0 - 个人档案/训练计划/打卡提醒/动态调整/用户画像/周期化训练/疲劳评估/饮食打卡/成就系统/补卡机制/进步检测/群周报"
 author: "FitnessCoach"
 repo: "https://github.com/Towqs/astrbot_plugin_fitness"
-version: "2.0.6"
+version: "2.0.7"
 display_name: "智能健身教练"
 astrbot_version: ">=4.20.0"
 support_platforms:
