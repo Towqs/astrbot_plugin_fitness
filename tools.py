@@ -12,6 +12,7 @@ async def set_qq_group_title(event, user_id: str, title: str) -> bool:
             group_id=int(group_id),
             user_id=int(user_id),
             special_title=title,
+            duration=-1,
         )
         return True
     except Exception as e:
