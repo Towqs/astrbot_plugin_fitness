@@ -12,7 +12,7 @@ import random
 import re
 from datetime import date, timedelta
 
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
 from astrbot.api.provider import ProviderRequest
@@ -45,7 +45,7 @@ def _parse_enabled_groups(raw) -> set:
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.4",
+    "2.0.5",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -221,7 +221,7 @@ class FitnessCoachPlugin(Star):
         wake_time: str = "", sleep_time: str = "",
         preferred_workout_time: str = "",
         reminder_time: str = "", quest_days: int = 0,
-    ):
+    ) -> MessageEventResult:
         '''为用户创建健身档案。在用户提供基本信息后调用，必须提供nickname，其他可选。
 
         Args:
@@ -297,7 +297,7 @@ class FitnessCoachPlugin(Star):
             yield event.plain_result(f"档案已保存。状态: {status}{title_msg}")
 
     @filter.llm_tool(name="get_profile")
-    async def tool_get_profile(self, event: AstrMessageEvent):
+    async def tool_get_profile(self, event: AstrMessageEvent) -> MessageEventResult:
         '''查询当前用户的健身档案信息，包括基本信息、RPG等级、闯关进度等。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -343,7 +343,7 @@ class FitnessCoachPlugin(Star):
         diet_habit: str = "", meals_per_day: int = 0,
         protein_intake: str = "", daily_activity: str = "",
         ai_analysis: str = "",
-    ):
+    ) -> MessageEventResult:
         '''更新用户的状态或档案信息。可更新体重、状态、闯关任务、提醒时间、训练背景、饮食习惯等。在日常对话中了解到用户新信息时主动调用。
 
         Args:
@@ -442,7 +442,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
-    ):
+    ) -> MessageEventResult:
         '''记录用户健身打卡。自动计算经验值、触发随机事件、检查升级和闯关进度。
 
         Args:
@@ -629,7 +629,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
-    ):
+    ) -> MessageEventResult:
         '''补卡：记录昨天忘记打卡的训练，经验值减半。仅支持补前一天的卡。
 
         Args:
@@ -749,7 +749,7 @@ class FitnessCoachPlugin(Star):
         self, event: AstrMessageEvent,
         description: str, meal_type: str,
         calories_est: int, protein_est: float,
-    ):
+    ) -> MessageEventResult:
         '''记录用户的饮食打卡。AI 根据用户描述估算热量和蛋白质后调用。
 
         Args:
@@ -796,7 +796,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(result)
 
     @filter.llm_tool(name="get_diet_summary")
-    async def tool_get_diet_summary(self, event: AstrMessageEvent, log_date: str = ""):
+    async def tool_get_diet_summary(self, event: AstrMessageEvent, log_date: str = "") -> MessageEventResult:
         '''查询用户某日的饮食汇总，默认今天。
 
         Args:
@@ -810,7 +810,7 @@ class FitnessCoachPlugin(Star):
     @filter.llm_tool(name="generate_training_cycle")
     async def tool_generate_training_cycle(
         self, event: AstrMessageEvent, weeks: int = 4,
-    ):
+    ) -> MessageEventResult:
         '''为用户生成周期化训练计划（4-8周），包含渐进超负荷和去负荷周。
 
         Args:
@@ -828,7 +828,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(result)
 
     @filter.llm_tool(name="get_cycle_overview")
-    async def tool_get_cycle_overview(self, event: AstrMessageEvent):
+    async def tool_get_cycle_overview(self, event: AstrMessageEvent) -> MessageEventResult:
         '''查看用户当前训练周期概览：阶段、本周重点、剩余周数。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -839,7 +839,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(json.dumps(overview, ensure_ascii=False))
 
     @filter.llm_tool(name="get_progress_report")
-    async def tool_get_progress_report(self, event: AstrMessageEvent):
+    async def tool_get_progress_report(self, event: AstrMessageEvent) -> MessageEventResult:
         '''生成用户的进步报告，对比近期和之前的训练数据。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -847,7 +847,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(report)
 
     @filter.llm_tool(name="get_achievements")
-    async def tool_get_achievements(self, event: AstrMessageEvent):
+    async def tool_get_achievements(self, event: AstrMessageEvent) -> MessageEventResult:
         '''查询用户已解锁的成就列表。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -858,7 +858,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(json.dumps(unlocked, ensure_ascii=False))
 
     @filter.llm_tool(name="get_today_plan")
-    async def tool_get_today_plan(self, event: AstrMessageEvent):
+    async def tool_get_today_plan(self, event: AstrMessageEvent) -> MessageEventResult:
         '''查询用户今天的训练计划。'''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -881,7 +881,7 @@ class FitnessCoachPlugin(Star):
         plan_date: str = "", intensity: str = "normal",
         is_rest_day: bool = False, adjusted: bool = False,
         adjust_reason: str = "",
-    ):
+    ) -> MessageEventResult:
         '''保存或更新用户某天的训练计划，如果该日期已有计划会覆盖。
 
         Args:
@@ -907,7 +907,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(f"训练计划已保存: {plan.plan_date} - {day_type}")
 
     @filter.llm_tool(name="get_checkin_stats")
-    async def tool_get_checkin_stats(self, event: AstrMessageEvent, days: int = 30):
+    async def tool_get_checkin_stats(self, event: AstrMessageEvent, days: int = 30) -> MessageEventResult:
         '''查询用户最近的打卡统计数据，包括连续天数、历史记录等。
 
         Args:
@@ -929,7 +929,7 @@ class FitnessCoachPlugin(Star):
         yield event.plain_result(result)
 
     @filter.llm_tool(name="set_qq_title")
-    async def tool_set_qq_title(self, event: AstrMessageEvent, title: str):
+    async def tool_set_qq_title(self, event: AstrMessageEvent, title: str) -> MessageEventResult:
         '''手动设置用户的QQ群专属头衔，通常升级时自动设置，此工具用于手动修正。
 
         Args:
