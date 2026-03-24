@@ -98,6 +98,7 @@ git clone https://github.com/Towqs/astrbot_plugin_fitness.git
 3. 机器人在私聊中分步采集身高体重等信息，完成后群里自动通知
 4. 建档完成后，每天发送「打卡」记录训练
 5. 日常和教练聊天即可获得训练建议、计划调整等服务
+6.有bug可以加我qq：2775089081
 
 ## 📄 开源协议
 
