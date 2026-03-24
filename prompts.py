@@ -198,6 +198,43 @@ REMINDER_AI_PROMPT = """\
 要求：简短有力，带1个emoji，不要啰嗦。
 """
 
+# ==================== 晨间任务推送 AI 提示 ====================
+
+MORNING_BRIEFING_AI_PROMPT = """\
+为用户生成一条晨间训练任务推送消息（80字以内）。
+用户: {nickname} | 目标: {fitness_goal} | 连续打卡: {streak}天
+今日训练: {workout_type} | 训练内容: {workout_detail}
+偏好训练时间: {preferred_time}
+要求：
+1. 告诉用户今天练什么，列出具体动作
+2. 提醒训练时间
+3. 语气积极鼓励，带1-2个emoji
+4. 如果是休息日，鼓励用户好好休息恢复
+"""
+
+MORNING_BRIEFING_TEMPLATE = (
+    "☀️ 早安 {nickname}！今日训练任务：\n"
+    "📋 {workout_type} | {workout_detail}\n"
+    "⏰ 建议训练时间: {preferred_time}\n"
+    "{streak_line}"
+    "加油，完成后记得打卡～"
+)
+
+MORNING_REST_DAY_TEMPLATE = (
+    "☀️ 早安 {nickname}！今天是休息日 🛌\n"
+    "好好恢复，明天继续冲！"
+)
+
+# ==================== 训练前提醒 AI 提示 ====================
+
+PRE_WORKOUT_AI_PROMPT = """\
+为用户生成一条训练前提醒（40字以内）。
+用户: {nickname} | 今日训练: {workout_type} | 内容: {workout_detail}
+要求：提醒用户30分钟后开始训练，简短有力，带1个emoji。
+"""
+
+PRE_WORKOUT_TEMPLATE = "⏰ {nickname}，还有30分钟就到训练时间了！今天练 {workout_type}，准备好了吗？💪"
+
 # ==================== 周六反馈消息模板 ====================
 
 SATURDAY_FEEDBACK_TEMPLATE = (

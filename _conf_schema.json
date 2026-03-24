@@ -67,6 +67,24 @@
     "hint": "用于生成个性化提醒消息、简单数据检查等不需要高质量的场景。建议配置便宜的模型以节省费用。留空则提醒使用纯模板（零成本），不走 AI。",
     "default": ""
   },
+  "morning_briefing_enabled": {
+    "description": "启用晨间任务推送",
+    "type": "bool",
+    "hint": "开启后，每天早上自动推送今日训练任务（含具体动作）到群里",
+    "default": true
+  },
+  "morning_briefing_time": {
+    "description": "晨间任务推送时间",
+    "type": "string",
+    "hint": "每天推送今日训练任务的时间，格式 HH:MM",
+    "default": "08:00"
+  },
+  "pre_workout_reminder_enabled": {
+    "description": "启用训练前提醒",
+    "type": "bool",
+    "hint": "开启后，在用户偏好训练时间前30分钟提醒准备训练",
+    "default": true
+  },
   "saturday_feedback_time": {
     "description": "周六体重反馈时间",
     "type": "string",

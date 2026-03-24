@@ -8,7 +8,12 @@ from datetime import date
 from astrbot import logger
 from . import database as db
 from .rpg import get_title
-from .prompts import REMINDER_TEMPLATES, REMINDER_AI_PROMPT
+from .prompts import (
+    REMINDER_TEMPLATES, REMINDER_AI_PROMPT,
+    MORNING_BRIEFING_AI_PROMPT, MORNING_BRIEFING_TEMPLATE,
+    MORNING_REST_DAY_TEMPLATE,
+    PRE_WORKOUT_AI_PROMPT, PRE_WORKOUT_TEMPLATE,
+)
 from .weekly_report import WeeklyReportGenerator
 from .periodization import PeriodizationEngine
 
@@ -33,13 +38,21 @@ class ScheduledReminder:
 
     def __init__(self, context, lite_provider_id: str = "",
                  saturday_feedback_time: str = "10:00",
-                 weekly_report_time: str = "20:00"):
+                 weekly_report_time: str = "20:00",
+                 morning_briefing_enabled: bool = True,
+                 morning_briefing_time: str = "08:00",
+                 pre_workout_reminder_enabled: bool = True):
         self.context = context
         self.lite_provider_id = lite_provider_id
         self.saturday_feedback_time = saturday_feedback_time
         self.weekly_report_time = weekly_report_time
+        self.morning_briefing_enabled = morning_briefing_enabled
+        self.morning_briefing_time = morning_briefing_time
+        self.pre_workout_reminder_enabled = pre_workout_reminder_enabled
         self._scheduler = None
         self._reminded_today: set = set()
+        self._briefed_today: set = set()  # 晨间推送去重
+        self._pre_reminded_today: set = set()  # 训练前提醒去重
         self._last_date: str = ""
         self._weekly_report_gen = WeeklyReportGenerator()
         self._periodization_engine = PeriodizationEngine()
@@ -91,6 +104,25 @@ class ScheduledReminder:
             misfire_grace_time=120,
         )
 
+        # v2.0.7: 晨间任务推送
+        if self.morning_briefing_enabled:
+            try:
+                mb_h, mb_m = map(int, self.morning_briefing_time.split(":"))
+                self._scheduler.add_job(
+                    self._on_morning_briefing,
+                    trigger=CronTrigger(hour=mb_h, minute=mb_m),
+                    name="fitness_morning_briefing",
+                    misfire_grace_time=120,
+                    max_instances=1,
+                )
+                logger.info(f"晨间任务推送已注册: {self.morning_briefing_time}")
+            except Exception as e:
+                logger.warning(f"注册晨间任务推送失败: {e}")
+
+        # v2.0.7: 训练前提醒（按用户偏好时间 -30min 分组）
+        if self.pre_workout_reminder_enabled:
+            self._rebuild_pre_workout_jobs()
+
         mode = "AI个性化" if self.lite_provider_id else "纯模板"
         logger.info(f"健身打卡提醒服务已启动 (APScheduler, {mode}模式)")
 
@@ -140,8 +172,12 @@ class ScheduledReminder:
 
     async def _daily_refresh(self):
         self._reminded_today.clear()
+        self._briefed_today.clear()
+        self._pre_reminded_today.clear()
         self._last_date = date.today().isoformat()
         self._rebuild_jobs()
+        if self.pre_workout_reminder_enabled:
+            self._rebuild_pre_workout_jobs()
         # 自动推进训练周期的 current_week
         await self._advance_cycle_weeks()
 
@@ -406,3 +442,195 @@ class ScheduledReminder:
         except Exception as e:
             logger.error(f"发送群消息失败: {e}")
         return False
+
+    # ==================== v2.0.7: 晨间任务推送 ====================
+
+    async def _on_morning_briefing(self):
+        """每天早上推送今日训练任务给所有活跃用户"""
+        profiles = db.get_all_active_profiles()
+        for p in profiles:
+            user_id = p["user_id"]
+            group_id = p["group_id"]
+            key = f"{user_id}:{group_id}"
+
+            if key in self._briefed_today:
+                continue
+            self._briefed_today.add(key)
+
+            if p.get("current_status", "normal") in ("sick", "injured"):
+                continue
+
+            try:
+                plan = db.get_today_plan(user_id, group_id)
+                nickname = p.get("nickname", user_id)
+                level = p.get("level", 1)
+                title = get_title(level)
+                display_name = f"Lv.{level}【{title}】{nickname}"
+
+                if not plan or plan.is_rest_day:
+                    msg = MORNING_REST_DAY_TEMPLATE.format(nickname=display_name)
+                else:
+                    msg = await self._build_morning_briefing_msg(
+                        p, plan, display_name
+                    )
+
+                await self._send_group_message(group_id, user_id, msg)
+                logger.info(f"已发送晨间任务推送给 {nickname}({user_id})")
+            except Exception as e:
+                logger.error(f"晨间推送失败 {user_id}: {e}")
+
+    async def _build_morning_briefing_msg(self, p: dict, plan, display_name: str) -> str:
+        """构建晨间任务推送消息"""
+        nickname = p.get("nickname", p["user_id"])
+        streak = db.get_checkin_streak(p["user_id"], p["group_id"])
+        preferred_time = p.get("preferred_workout_time", "18:00")
+
+        # 尝试 AI 生成
+        if self.lite_provider_id:
+            try:
+                prompt = MORNING_BRIEFING_AI_PROMPT.format(
+                    nickname=nickname,
+                    fitness_goal=p.get("fitness_goal", ""),
+                    streak=streak,
+                    workout_type=plan.workout_type,
+                    workout_detail=plan.workout_detail,
+                    preferred_time=preferred_time,
+                )
+                logger.debug(f"[模型路由] 晨间推送 → {self.lite_provider_id}")
+                resp = await self.context.llm_generate(
+                    chat_provider_id=self.lite_provider_id,
+                    prompt=prompt,
+                )
+                if resp and resp.completion_text:
+                    return f"{display_name}\n{resp.completion_text.strip()}"
+            except Exception as e:
+                logger.debug(f"AI晨间推送生成失败，回退模板: {e}")
+
+        # 纯模板
+        streak_line = f"🔥 已连续打卡 {streak} 天！\n" if streak > 0 else ""
+        return MORNING_BRIEFING_TEMPLATE.format(
+            nickname=display_name,
+            workout_type=plan.workout_type,
+            workout_detail=plan.workout_detail,
+            preferred_time=preferred_time,
+            streak_line=streak_line,
+        )
+
+    # ==================== v2.0.7: 训练前提醒 ====================
+
+    def _rebuild_pre_workout_jobs(self):
+        """按用户偏好训练时间 -30min 分组注册 cron job"""
+        # 移除旧的训练前提醒 job
+        if not self._scheduler:
+            return
+        jobs_to_remove = [job for job in self._scheduler.get_jobs()
+                          if job.name.startswith("fitness_preworkout_")]
+        for job in jobs_to_remove:
+            job.remove()
+
+        profiles = db.get_all_active_profiles()
+        time_groups = set()
+        for p in profiles:
+            wt = p.get("preferred_workout_time", "")
+            if wt and ":" in wt:
+                # 计算 -30 分钟
+                try:
+                    h, m = map(int, wt.split(":"))
+                    total_min = h * 60 + m - 30
+                    if total_min < 0:
+                        total_min += 24 * 60
+                    pre_h, pre_m = divmod(total_min, 60)
+                    time_groups.add(f"{pre_h:02d}:{pre_m:02d}")
+                except ValueError:
+                    continue
+
+        for time_str in time_groups:
+            try:
+                hour, minute = map(int, time_str.split(":"))
+                self._scheduler.add_job(
+                    self._on_pre_workout_tick,
+                    trigger=CronTrigger(hour=hour, minute=minute),
+                    args=[time_str],
+                    name=f"fitness_preworkout_{time_str}",
+                    misfire_grace_time=120,
+                    max_instances=1,
+                )
+            except Exception as e:
+                logger.warning(f"注册训练前提醒 {time_str} 失败: {e}")
+
+        logger.info(f"已注册 {len(time_groups)} 个训练前提醒时间点")
+
+    async def _on_pre_workout_tick(self, pre_time_str: str):
+        """训练前30分钟提醒"""
+        # 反推原始训练时间
+        pre_h, pre_m = map(int, pre_time_str.split(":"))
+        total_min = pre_h * 60 + pre_m + 30
+        if total_min >= 24 * 60:
+            total_min -= 24 * 60
+        orig_h, orig_m = divmod(total_min, 60)
+        workout_time_str = f"{orig_h:02d}:{orig_m:02d}"
+
+        profiles = db.get_all_active_profiles()
+        for p in profiles:
+            if p.get("preferred_workout_time", "") != workout_time_str:
+                continue
+
+            user_id = p["user_id"]
+            group_id = p["group_id"]
+            key = f"{user_id}:{group_id}"
+
+            if key in self._pre_reminded_today:
+                continue
+            self._pre_reminded_today.add(key)
+
+            if p.get("current_status", "normal") in ("sick", "injured", "rest"):
+                continue
+
+            # 已打卡则跳过
+            checkin = db.get_today_checkin(user_id, group_id)
+            if checkin:
+                continue
+
+            try:
+                plan = db.get_today_plan(user_id, group_id)
+                if not plan or plan.is_rest_day:
+                    continue
+
+                nickname = p.get("nickname", user_id)
+                level = p.get("level", 1)
+                title = get_title(level)
+                display_name = f"Lv.{level}【{title}】{nickname}"
+
+                msg = await self._build_pre_workout_msg(p, plan, display_name)
+                await self._send_group_message(group_id, user_id, msg)
+                logger.info(f"已发送训练前提醒给 {nickname}({user_id})")
+            except Exception as e:
+                logger.error(f"训练前提醒失败 {user_id}: {e}")
+
+    async def _build_pre_workout_msg(self, p: dict, plan, display_name: str) -> str:
+        """构建训练前提醒消息"""
+        nickname = p.get("nickname", p["user_id"])
+
+        # 尝试 AI 生成
+        if self.lite_provider_id:
+            try:
+                prompt = PRE_WORKOUT_AI_PROMPT.format(
+                    nickname=nickname,
+                    workout_type=plan.workout_type,
+                    workout_detail=plan.workout_detail,
+                )
+                logger.debug(f"[模型路由] 训练前提醒 → {self.lite_provider_id}")
+                resp = await self.context.llm_generate(
+                    chat_provider_id=self.lite_provider_id,
+                    prompt=prompt,
+                )
+                if resp and resp.completion_text:
+                    return f"{display_name}\n{resp.completion_text.strip()}"
+            except Exception as e:
+                logger.debug(f"AI训练前提醒生成失败，回退模板: {e}")
+
+        # 纯模板
+        return PRE_WORKOUT_TEMPLATE.format(
+            nickname=display_name,
+            workout_type=plan.workout_type,
+        )

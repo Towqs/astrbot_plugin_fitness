@@ -50,7 +50,7 @@ ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.7",
+    "2.0.8",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -87,10 +87,16 @@ class FitnessCoachPlugin(Star):
         if self.reminder_enabled:
             saturday_time = config.get("saturday_feedback_time", "10:00")
             report_time = config.get("weekly_report_time", "20:00")
+            morning_enabled = config.get("morning_briefing_enabled", True)
+            morning_time = config.get("morning_briefing_time", "08:00")
+            pre_workout_enabled = config.get("pre_workout_reminder_enabled", True)
             self.reminder = ScheduledReminder(
                 context, self.lite_provider_id,
                 saturday_feedback_time=saturday_time,
                 weekly_report_time=report_time,
+                morning_briefing_enabled=morning_enabled,
+                morning_briefing_time=morning_time,
+                pre_workout_reminder_enabled=pre_workout_enabled,
             )
             self.reminder.start()
 
