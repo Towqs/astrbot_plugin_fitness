@@ -91,8 +91,12 @@ class FatigueAssessor:
         if user_status in ("sick", "injured"):
             score = 100
 
+        should_adjust = self.should_rest(score, user_status, feelings)
+
         # 生成建议
-        if score <= 40:
+        if should_adjust and score <= 75:
+            suggestion = "连续多天训练吃力，建议安排休息或降低强度"
+        elif score <= 40:
             suggestion = "状态良好，继续保持！"
         elif score <= 60:
             suggestion = "有些疲劳，注意控制强度"
@@ -100,8 +104,6 @@ class FatigueAssessor:
             suggestion = "疲劳度较高，建议降低训练强度"
         else:
             suggestion = "身体需要休息，建议安排休息日"
-
-        should_adjust = score > 75
 
         return FatigueResult(
             score=score,

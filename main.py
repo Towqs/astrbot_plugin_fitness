@@ -50,7 +50,7 @@ ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.8",
+    "2.0.9",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -530,6 +530,7 @@ class FitnessCoachPlugin(Star):
                 qname = quest_names.get(p.quest_days, f"{p.quest_days}天")
                 quest_msg = f"🏆 闯关【{qname}】通关！奖励 {quest_bonus} 经验！"
 
+        leveled_up = p.level > old_level
         db.save_profile(p)
 
         # 升级时设置群头衔
@@ -705,7 +706,19 @@ class FitnessCoachPlugin(Star):
                 qname = quest_names.get(p.quest_days, f"{p.quest_days}天")
                 quest_msg = f"🏆 闯关【{qname}】通关！奖励 {quest_bonus} 经验！"
 
+        leveled_up = p.level > old_level
         db.save_profile(p)
+
+        title_msg = ""
+        if leveled_up:
+            new_title = get_title(p.level)
+            if self.title_sync_enabled:
+                ok = await set_qq_group_title(event, user_id, f"Lv.{p.level} {new_title}")
+                title_msg = f"🎉 升级到 Lv.{p.level}【{new_title}】！"
+                if ok:
+                    title_msg += " 群头衔已更新！"
+            else:
+                title_msg = f"🎉 升级到 Lv.{p.level}【{new_title}】！"
 
         # 成就检查（补卡也触发）
         ach_msg = ""
@@ -731,9 +744,19 @@ class FitnessCoachPlugin(Star):
                 ach_exp += a.get("exp", 0)
                 ach_msg += f"\n🏅 解锁成就【{a['name']}】+{a['exp']}exp"
             if ach_exp > 0:
+                pre_ach_level = p.level
                 p.exp += ach_exp
                 p.level = calc_level(p.exp)
                 db.save_profile(p)
+                if p.level > pre_ach_level:
+                    new_title = get_title(p.level)
+                    if self.title_sync_enabled:
+                        ok = await set_qq_group_title(event, user_id, f"Lv.{p.level} {new_title}")
+                        ach_msg += f"\n🎉 成就奖励升级到 Lv.{p.level}【{new_title}】！"
+                        if ok:
+                            ach_msg += " 群头衔已更新！"
+                    else:
+                        ach_msg += f"\n🎉 成就奖励升级到 Lv.{p.level}【{new_title}】！"
 
         result = json.dumps({
             "status": "补卡成功",
@@ -743,6 +766,7 @@ class FitnessCoachPlugin(Star):
             "streak": streak,
             "level": p.level,
             "quest_msg": quest_msg,
+            "levelup_msg": title_msg,
             "achievements": ach_msg,
         }, ensure_ascii=False)
         return result
@@ -1837,13 +1861,6 @@ class FitnessCoachPlugin(Star):
             )
 
         yield event.plain_result("\n".join(lines))
-
-    async def terminate(self):
-        """插件卸载/停用时调用，关闭定时任务调度器防止重复发送"""
-        if self.reminder:
-            self.reminder.stop()
-            self.reminder = None
-        logger.info("智能健身教练插件已卸载，定时任务已停止")
 
     async def terminate(self):
         """插件卸载/停用时调用，关闭定时任务调度器防止重复发送"""

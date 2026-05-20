@@ -347,12 +347,12 @@ class ScheduledReminder:
                 start = date.fromisoformat(cycle.start_date)
                 today = date.today()
                 elapsed_weeks = (today - start).days // 7 + 1
-                elapsed_weeks = max(1, min(elapsed_weeks, cycle.total_weeks))
-                if elapsed_weeks != cycle.current_week:
-                    if elapsed_weeks > cycle.total_weeks:
-                        db.complete_cycle(cycle.id)
-                    else:
-                        db.update_cycle_week(cycle.id, elapsed_weeks)
+                if elapsed_weeks > cycle.total_weeks:
+                    db.complete_cycle(cycle.id)
+                    continue
+                current_week = max(1, elapsed_weeks)
+                if current_week != cycle.current_week:
+                    db.update_cycle_week(cycle.id, current_week)
             except Exception as e:
                 logger.debug(f"推进训练周期失败 {user_id}: {e}")
 
