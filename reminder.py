@@ -397,6 +397,8 @@ class ScheduledReminder:
                             f"打卡人数: {stats.get('checkin_users', 0)}/{stats.get('total_members', 0)}\n"
                             f"总打卡次数: {stats.get('total_checkins', 0)}\n"
                             f"打卡率: {stats.get('checkin_rate', 0)}%\n"
+                            f"总训练负荷: {stats.get('total_training_load', 0)}\n"
+                            f"计划完成率: {stats.get('plan_completion_rate', 0)}%\n"
                             f"要求：鼓励为主，简洁有力，带1-2个emoji"
                         )
                         logger.debug(f"[模型路由] 周报评语 → {self.lite_provider_id}")

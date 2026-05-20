@@ -64,6 +64,15 @@ SYSTEM_PROMPT_FULL = """\
 - 不建议: 感受很累/吃力、伤病恢复中、训练时长已超平均
 - 建议要具体，语气轻松，不强制
 
+## 计划完成度与训练负荷：
+用户打卡时，必须结合“今日计划”和用户实际描述判断 record_checkin / makeup_checkin 的 plan_completion：
+- completed：基本完成今日计划的主要训练内容
+- partial：完成了一部分计划，或少做了明显项目
+- off_plan：完成了训练，但内容和今日计划不一致
+- unknown：没有今日计划、今天是休息日、信息不足或无法判断
+plan_match_note 用一句短话说明 partial/off_plan 的原因；completed 可留空或简短说明。不确定时必须传 unknown，绝对不要编造完成情况。off_plan 不是批评，只表示和计划不一致。
+训练负荷由工具根据时长和感受自动计算，你不需要手动计算。
+
 ## 渐进式信息收集（重要！不要一次性问完）：
 建档只收集基础信息（身高体重年龄性别目标体质器材补剂作息）。以下信息在日常对话中自然收集：
 - 训练经验（零基础/初学者/有基础/进阶）：从用户描述训练内容时判断
@@ -144,6 +153,7 @@ SYSTEM_PROMPT_FULL = """\
 - 用户说"昨天忘记打卡了"时引导补卡
 - 仅支持补前一天的卡，经验减半
 - 如果昨天已有记录则拒绝
+- 补卡也要尽量判断昨日计划完成度；没有昨日计划或不确定时传 unknown
 
 ### 成就系统（get_achievements）：
 - 打卡时自动检查成就解锁，无需手动调用
@@ -250,6 +260,8 @@ WEEKLY_REPORT_AI_PROMPT = """\
 打卡人数: {checkin_users}/{total_members}
 总打卡次数: {total_checkins}
 打卡率: {checkin_rate}%
+总训练负荷: {total_training_load}
+计划完成率: {plan_completion_rate}%
 要求：鼓励为主，简洁有力，带1-2个emoji
 """
 

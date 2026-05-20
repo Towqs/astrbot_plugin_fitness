@@ -76,6 +76,9 @@ def init_db():
                 duration_min INTEGER DEFAULT 0,
                 calories_est INTEGER DEFAULT 0,
                 feeling TEXT DEFAULT '',
+                plan_completion TEXT DEFAULT 'unknown',
+                training_load INTEGER DEFAULT 0,
+                plan_match_note TEXT DEFAULT '',
                 note TEXT DEFAULT '',
                 created_at TEXT DEFAULT ''
             )
@@ -182,6 +185,17 @@ def init_db():
                 c.execute(f"ALTER TABLE user_profiles ADD COLUMN {col_name} {col_type}")
             except sqlite3.OperationalError:
                 pass  # 列已存在
+
+        checkin_migrate_columns = [
+            ("plan_completion", "TEXT DEFAULT 'unknown'"),
+            ("training_load", "INTEGER DEFAULT 0"),
+            ("plan_match_note", "TEXT DEFAULT ''"),
+        ]
+        for col_name, col_type in checkin_migrate_columns:
+            try:
+                c.execute(f"ALTER TABLE checkin_records ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # 列已存在
         conn.commit()
     finally:
         conn.close()
@@ -258,16 +272,27 @@ def add_checkin(record: CheckinRecord):
     try:
         conn.execute("""
             INSERT INTO checkin_records (user_id, group_id, checkin_date, workout_type,
-                workout_detail, duration_min, calories_est, feeling, note, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+                workout_detail, duration_min, calories_est, feeling,
+                plan_completion, training_load, plan_match_note, note, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             record.user_id, record.group_id, record.checkin_date, record.workout_type,
             record.workout_detail, record.duration_min, record.calories_est,
-            record.feeling, record.note, record.created_at
+            record.feeling, record.plan_completion, record.training_load,
+            record.plan_match_note, record.note, record.created_at
         ))
         conn.commit()
     finally:
         conn.close()
+
+
+def _row_to_checkin(row: sqlite3.Row) -> CheckinRecord:
+    r = CheckinRecord()
+    for f in ["id","user_id","group_id","checkin_date","workout_type","workout_detail",
+              "duration_min","calories_est","feeling","plan_completion","training_load",
+              "plan_match_note","note","created_at"]:
+        setattr(r, f, row[f])
+    return r
 
 
 def get_today_checkin(user_id: str, group_id: str) -> Optional[CheckinRecord]:
@@ -280,11 +305,7 @@ def get_today_checkin(user_id: str, group_id: str) -> Optional[CheckinRecord]:
         ).fetchone()
         if not row:
             return None
-        r = CheckinRecord()
-        for f in ["id","user_id","group_id","checkin_date","workout_type","workout_detail",
-                  "duration_min","calories_est","feeling","note","created_at"]:
-            setattr(r, f, row[f])
-        return r
+        return _row_to_checkin(row)
     finally:
         conn.close()
 

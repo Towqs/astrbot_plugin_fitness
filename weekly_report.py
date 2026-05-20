@@ -1,6 +1,7 @@
 """群周报模块"""
 from datetime import date, timedelta
 from . import database as db
+from .training_quality import summarize_quality
 
 
 class WeeklyReportGenerator:
@@ -65,14 +66,29 @@ class WeeklyReportGenerator:
         exp_ranking.sort(key=lambda x: x["checkins"], reverse=True)
         exp_ranking = exp_ranking[:5]
 
+        quality = summarize_quality(checkins)
+        user_loads = {}
+        for c in checkins:
+            uid = c["user_id"]
+            user_loads[uid] = user_loads.get(uid, 0) + int(c.get("training_load") or 0)
+        load_ranking = [
+            {"nickname": uid_to_nick.get(uid, uid), "load": load}
+            for uid, load in user_loads.items()
+            if load > 0
+        ]
+        load_ranking.sort(key=lambda x: x["load"], reverse=True)
+        load_ranking = load_ranking[:5]
+
         return {
             "empty": False,
             "total_members": total_members,
             "total_checkins": total_checkins,
             "checkin_users": len(checkin_users),
             "checkin_rate": checkin_rate,
+            **quality,
             "streak_ranking": streak_ranking,
             "exp_ranking": exp_ranking,
+            "load_ranking": load_ranking,
             "week_start": monday_str,
             "week_end": today_str,
         }
@@ -87,6 +103,8 @@ class WeeklyReportGenerator:
         text += f"👥 打卡人数: {stats['checkin_users']}/{stats['total_members']}\n"
         text += f"✅ 总打卡次数: {stats['total_checkins']}\n"
         text += f"📈 打卡率: {stats['checkin_rate']}%\n"
+        text += f"🏋️ 总训练负荷: {stats.get('total_training_load', 0)} | 平均 {stats.get('avg_training_load', 0)}\n"
+        text += f"🎯 计划完成率: {stats.get('plan_completion_rate', 0)}%\n"
 
         if stats.get("streak_ranking"):
             text += "\n🔥 连续打卡排行:\n"
@@ -99,6 +117,12 @@ class WeeklyReportGenerator:
             for i, r in enumerate(stats["exp_ranking"], 1):
                 medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
                 text += f"  {medal} {r['nickname']} - {r['checkins']}次打卡\n"
+
+        if stats.get("load_ranking"):
+            text += "\n🏋️ 训练负荷排行:\n"
+            for i, r in enumerate(stats["load_ranking"], 1):
+                medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+                text += f"  {medal} {r['nickname']} - {r['load']}负荷\n"
 
         if ai_comment:
             text += f"\n━━━━━━━━━━━━━━━\n🏋️ 教练点评:\n{ai_comment}\n"

@@ -69,6 +69,9 @@ class CheckinRecord:
     duration_min: int = 0      # 时长（分钟）
     calories_est: int = 0      # 估算消耗大卡
     feeling: str = ""          # 感受：轻松/适中/吃力/很累
+    plan_completion: str = "unknown"  # completed/partial/off_plan/unknown
+    training_load: int = 0     # 训练负荷评分
+    plan_match_note: str = ""  # 计划匹配说明
     note: str = ""
     created_at: str = ""
 

@@ -1,6 +1,7 @@
 """进步检测模块"""
 from datetime import date, timedelta
 from . import database as db
+from .training_quality import summarize_quality
 
 
 class ProgressDetector:
@@ -66,6 +67,9 @@ class ProgressDetector:
         report += "\n"
         report += f"🔥 当前连续打卡: {streak}天\n"
         report += f"📈 近期频率: {len(newer)}次/{len(history)}次总计\n"
+        quality = summarize_quality(history)
+        report += f"🏋️ 最近负荷: 总计 {quality['total_training_load']} | 平均 {quality['avg_training_load']}\n"
+        report += f"✅ 计划完成率: {quality['plan_completion_rate']}% | 部分完成 {quality['partial_count']} 次 | 未按计划 {quality['off_plan_count']} 次\n"
 
         # 体重趋势
         weight_records = db.get_weight_history(user_id, group_id, days=28)

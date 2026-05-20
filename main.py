@@ -32,6 +32,12 @@ from .diet import DietLogger
 from .achievement import AchievementSystem, ACHIEVEMENTS
 from .progress import ProgressDetector
 from .periodization import PeriodizationEngine
+from .training_quality import (
+    calculate_training_load,
+    format_quality_line,
+    normalize_plan_completion,
+    summarize_quality,
+)
 
 # 群白名单辅助
 def _parse_enabled_groups(raw) -> set:
@@ -460,6 +466,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
+        plan_completion: str = "unknown", plan_match_note: str = "",
     ):
         '''记录用户健身打卡。自动计算经验值、触发随机事件、检查升级和闯关进度。
 
@@ -470,6 +477,8 @@ class FitnessCoachPlugin(Star):
             feeling(string): 感受 轻松/适中/吃力/很累
             calories_est(number): 估算消耗大卡
             note(string): 备注
+            plan_completion(string): 今日计划完成度 completed/partial/off_plan/unknown。不确定、无计划或休息日时传 unknown
+            plan_match_note(string): 计划匹配说明，简短说明完成/部分完成/未按计划原因
         '''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -482,11 +491,15 @@ class FitnessCoachPlugin(Star):
         if existing:
             return "今天已经打过卡了，明天继续加油！"
 
+        normalized_completion = normalize_plan_completion(plan_completion)
+        training_load = calculate_training_load(duration_min, feeling)
         record = CheckinRecord(
             user_id=user_id, group_id=group_id, checkin_date=today,
             workout_type=workout_type, workout_detail=workout_detail,
             duration_min=int(duration_min), calories_est=int(calories_est),
-            feeling=feeling, note=note,
+            feeling=feeling, plan_completion=normalized_completion,
+            training_load=training_load, plan_match_note=plan_match_note,
+            note=note,
         )
         db.add_checkin(record)
 
@@ -558,12 +571,18 @@ class FitnessCoachPlugin(Star):
             rpg_text += f" | Lv.{p.level} ({p.exp}/{next_exp})"
         if streak > 1:
             rpg_text += f" | 🔥连续{streak}天"
+        quality_text = format_quality_line(
+            normalized_completion, plan_match_note, training_load
+        )
+        rpg_text += f"\n{quality_text}"
 
         # 加练判定上下文
         history = db.get_checkin_history(user_id, group_id, days=7)
         avg_dur = sum(h.get("duration_min", 0) for h in history) / max(len(history), 1)
         extra_ctx = json.dumps({
             "feeling": feeling, "duration_min": duration_min,
+            "training_load": training_load,
+            "plan_completion": normalized_completion,
             "avg_duration_7d": round(avg_dur, 1), "streak": streak,
             "quest_progress": p.quest_progress, "quest_days": p.quest_days,
             "fitness_goal": p.fitness_goal, "equipment": p.equipment,
@@ -635,7 +654,10 @@ class FitnessCoachPlugin(Star):
         result = json.dumps({
             "rpg_text": rpg_text + ach_msg + fatigue_msg + progress_msg,
             "exp_gained": int(total_exp) + ach_exp,
-            "streak": streak, "extra_training_context": extra_ctx,
+            "streak": streak, "training_load": training_load,
+            "plan_completion": normalized_completion,
+            "plan_match_note": plan_match_note,
+            "extra_training_context": extra_ctx,
         }, ensure_ascii=False)
         await send_poke(event, user_id)
         return result
@@ -646,6 +668,7 @@ class FitnessCoachPlugin(Star):
         workout_type: str, workout_detail: str,
         duration_min: int, feeling: str,
         calories_est: int = 0, note: str = "",
+        plan_completion: str = "unknown", plan_match_note: str = "",
     ):
         '''补卡：记录昨天忘记打卡的训练，经验值减半。仅支持补前一天的卡。
 
@@ -656,6 +679,8 @@ class FitnessCoachPlugin(Star):
             feeling(string): 感受 轻松/适中/吃力/很累
             calories_est(number): 估算消耗大卡
             note(string): 备注
+            plan_completion(string): 昨日计划完成度 completed/partial/off_plan/unknown。不确定、无计划或休息日时传 unknown
+            plan_match_note(string): 计划匹配说明，简短说明完成/部分完成/未按计划原因
         '''
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
@@ -670,11 +695,15 @@ class FitnessCoachPlugin(Star):
             return "昨天已有打卡记录，无需补卡。"
 
         # 创建昨天的打卡记录
+        normalized_completion = normalize_plan_completion(plan_completion)
+        training_load = calculate_training_load(duration_min, feeling)
         record = CheckinRecord(
             user_id=user_id, group_id=group_id, checkin_date=yesterday,
             workout_type=workout_type, workout_detail=workout_detail,
             duration_min=int(duration_min), calories_est=int(calories_est),
-            feeling=feeling, note=f"[补卡] {note}",
+            feeling=feeling, plan_completion=normalized_completion,
+            training_load=training_load, plan_match_note=plan_match_note,
+            note=f"[补卡] {note}",
         )
         db.add_checkin(record)
 
@@ -768,6 +797,12 @@ class FitnessCoachPlugin(Star):
             "quest_msg": quest_msg,
             "levelup_msg": title_msg,
             "achievements": ach_msg,
+            "training_load": training_load,
+            "plan_completion": normalized_completion,
+            "plan_match_note": plan_match_note,
+            "quality_text": format_quality_line(
+                normalized_completion, plan_match_note, training_load
+            ),
         }, ensure_ascii=False)
         return result
 
@@ -944,10 +979,12 @@ class FitnessCoachPlugin(Star):
         total = len(history)
         total_dur = sum(h.get("duration_min", 0) for h in history)
         total_cal = sum(h.get("calories_est", 0) for h in history)
+        quality = summarize_quality(history)
         result = json.dumps({
             "streak": streak, "total_checkins": total,
             "total_duration_min": total_dur, "total_calories": total_cal,
             "avg_duration_min": round(total_dur / max(total, 1), 1),
+            **quality,
             "recent_records": history[:5],
         }, ensure_ascii=False)
         return result
@@ -1044,6 +1081,7 @@ class FitnessCoachPlugin(Star):
         history = db.get_checkin_history(user_id, group_id, days=30)
         streak = db.get_checkin_streak(user_id, group_id)
         total_all = db.get_total_checkins(user_id, group_id)
+        quality = summarize_quality(history)
         # 周期
         cycle = db.get_active_cycle(user_id, group_id)
         cycle_data = {}
@@ -1069,6 +1107,7 @@ class FitnessCoachPlugin(Star):
                 "streak": streak, "total_all_time": total_all,
                 "last_30_days": len(history),
                 "avg_duration": round(sum(h.get("duration_min", 0) for h in history) / max(len(history), 1), 1),
+                **quality,
             },
             "cycle": cycle_data,
         }
