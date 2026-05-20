@@ -50,6 +50,7 @@ def _parse_enabled_groups(raw) -> set:
 
 # 建档会话超时时间（秒）
 ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
+DIET_LOG_TIMEOUT_SECONDS = 10 * 60  # 10 分钟
 
 
 @register(
@@ -116,6 +117,8 @@ class FitnessCoachPlugin(Star):
 
         # 私聊建档会话状态: {user_id: {"step": str, "data": dict, "group_id": str, "group_origin": str}}
         self._onboarding_sessions: dict[str, dict] = {}
+        # 饮食记录待输入状态: {"user_id:group_id": {"created_at": float}}
+        self._diet_log_sessions: dict[str, dict] = {}
 
         chat_label = self.chat_provider_id or "默认"
         lite_label = self.lite_provider_id or "未配置"
@@ -139,6 +142,110 @@ class FitnessCoachPlugin(Star):
         ]
         for uid in expired:
             del self._onboarding_sessions[uid]
+
+    def _diet_session_key(self, user_id: str, group_id: str) -> str:
+        return f"{user_id}:{group_id}"
+
+    def _cleanup_expired_diet_sessions(self) -> None:
+        """移除超过 TTL 的饮食记录待输入会话"""
+        now = time.time()
+        expired = [
+            key for key, session in self._diet_log_sessions.items()
+            if now - session.get("created_at", 0) > DIET_LOG_TIMEOUT_SECONDS
+        ]
+        for key in expired:
+            del self._diet_log_sessions[key]
+
+    async def _estimate_diet_entry(self, text: str) -> dict:
+        """估算饮食热量和蛋白质，LLM 失败时使用保守兜底。"""
+        prompt = (
+            "请根据用户描述估算一条饮食记录，只输出 JSON，不要解释。\n"
+            "JSON字段: meal_type(早餐/午餐/晚餐/加餐), description, calories_est(整数), protein_est(数字)。\n"
+            "不确定时给合理中间估计，不要返回范围。\n"
+            f"用户描述: {text[:300]}"
+        )
+        provider_id = self.chat_provider_id or self.lite_provider_id
+        try:
+            resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+            )
+            if resp and resp.completion_text:
+                raw = resp.completion_text.strip()
+                match = re.search(r"\{.*\}", raw, re.S)
+                data = json.loads(match.group(0) if match else raw)
+                return {
+                    "meal_type": str(data.get("meal_type") or self._infer_meal_type(text)),
+                    "description": str(data.get("description") or text),
+                    "calories_est": int(float(data.get("calories_est", 400))),
+                    "protein_est": float(data.get("protein_est", 20)),
+                }
+        except Exception as e:
+            logger.debug(f"饮食估算失败，使用兜底估算: {e}")
+
+        return self._fallback_diet_entry(text)
+
+    def _infer_meal_type(self, text: str) -> str:
+        if any(word in text for word in ("早餐", "早饭", "早上")):
+            return "早餐"
+        if any(word in text for word in ("午餐", "午饭", "中午")):
+            return "午餐"
+        if any(word in text for word in ("晚餐", "晚饭", "晚上")):
+            return "晚餐"
+        return "加餐"
+
+    def _fallback_diet_entry(self, text: str) -> dict:
+        """无模型可用时的保守估算，保证用户流程不中断。"""
+        calories = 300
+        protein = 12.0
+        high_calorie_words = ("饭", "面", "粉", "汉堡", "炸", "披萨", "蛋糕", "奶茶")
+        high_protein_words = ("鸡", "牛", "鱼", "虾", "蛋", "奶", "豆腐", "蛋白")
+        if any(word in text for word in high_calorie_words):
+            calories += 250
+        if any(word in text for word in high_protein_words):
+            protein += 18
+        if any(word in text for word in ("一碗", "一份", "套餐", "两个", "2个")):
+            calories += 150
+        return {
+            "meal_type": self._infer_meal_type(text),
+            "description": text,
+            "calories_est": calories,
+            "protein_est": protein,
+        }
+
+    def _extract_diet_text_from_command(self, event: AstrMessageEvent) -> str:
+        """提取「饮食记录 xxx」中的饮食描述，兼容命令框架传入剩余参数。"""
+        raw = event.message_str.strip() if event.message_str else ""
+        if not raw:
+            return ""
+        if "饮食记录" in raw:
+            raw = raw.split("饮食记录", 1)[1]
+        text = raw.strip()
+        text = text.lstrip(" /／:：,，-—")
+        return text.strip()
+
+    async def _record_diet_text(self, event: AstrMessageEvent, text: str) -> str:
+        """根据用户文本估算并记录饮食，返回可直接发送的摘要。"""
+        entry = await self._estimate_diet_entry(text)
+        result = await self.tool_record_diet(
+            event,
+            description=entry["description"],
+            meal_type=entry["meal_type"],
+            calories_est=entry["calories_est"],
+            protein_est=entry["protein_est"],
+        )
+        try:
+            data = json.loads(result)
+            reply = (
+                f"🍽️ 已记录{data.get('meal_type', entry['meal_type'])}: {entry['description']}\n"
+                f"估算: {data.get('calories', entry['calories_est'])}kcal | "
+                f"{data.get('protein', entry['protein_est'])}g蛋白质"
+            )
+            if data.get("achievements"):
+                reply += data["achievements"]
+            return reply
+        except Exception:
+            return result
 
     # ==================== LLM 系统提示注入 ====================
 
@@ -1192,6 +1299,45 @@ class FitnessCoachPlugin(Star):
     # ==================== 主动回复 ====================
 
     @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
+    async def on_pending_diet_log(self, event: AstrMessageEvent):
+        """处理「饮食记录」后用户直接发送的下一条饮食描述"""
+        if not self.diet_log_enabled:
+            return
+        if not self._is_group_enabled(event):
+            return
+
+        self._cleanup_expired_diet_sessions()
+
+        user_id = event.get_sender_id()
+        if user_id == event.get_self_id():
+            return
+
+        group_id = str(event.unified_msg_origin)
+        key = self._diet_session_key(user_id, group_id)
+        if key not in self._diet_log_sessions:
+            return
+
+        msg_text = event.message_str.strip() if event.message_str else ""
+        if not msg_text:
+            return
+
+        if msg_text in ("取消", "不用了", "算了", "退出"):
+            self._diet_log_sessions.pop(key, None)
+            event.stop_event()
+            await event.send(event.plain_result("已取消本次饮食记录～"))
+            return
+
+        if msg_text in ("饮食记录", "我的档案", "今日计划", "我的计划", "打卡", "补卡"):
+            return
+
+        event.stop_event()
+        self._diet_log_sessions.pop(key, None)
+
+        text = await self._record_diet_text(event, msg_text)
+
+        await event.send(event.plain_result(text))
+
+    @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_proactive_reply(self, event: AstrMessageEvent):
         """以可配置概率主动回复群消息"""
         if not self.proactive_reply_enabled:
@@ -1734,10 +1880,27 @@ class FitnessCoachPlugin(Star):
         """查看今日饮食汇总"""
         user_id = event.get_sender_id()
         group_id = str(event.unified_msg_origin)
+        profile = db.get_profile(user_id, group_id)
+        if not profile:
+            yield event.plain_result("你还没有建立健身档案哦，先发送「健身注册」完成建档后再记录饮食～")
+            return
+
+        diet_text = self._extract_diet_text_from_command(event)
+        if diet_text:
+            yield event.plain_result(await self._record_diet_text(event, diet_text))
+            return
+
         summary = self.diet_logger.get_daily_summary(user_id, group_id)
 
         if summary["meal_count"] == 0:
-            yield event.plain_result("今天还没有饮食记录，告诉我你吃了什么我帮你记录～ 🍽️")
+            self._diet_log_sessions[self._diet_session_key(user_id, group_id)] = {
+                "created_at": time.time()
+            }
+            yield event.plain_result(
+                "今天还没有饮食记录，10分钟内直接告诉我你吃了什么，我帮你记录～ 🍽️\n"
+                "比如：午饭吃了一碗米饭、鸡胸肉和青菜\n"
+                "发送「取消」可以退出本次记录"
+            )
             return
 
         text = f"🍽️ 今日饮食记录\n━━━━━━━━━━━━━━━\n"
@@ -1745,7 +1908,11 @@ class FitnessCoachPlugin(Star):
             text += f"  {m['meal_type']}: {m['description']} ({m['calories']}kcal, {m['protein']}g蛋白)\n"
         text += f"━━━━━━━━━━━━━━━\n"
         text += f"📊 总计: {summary['total_calories']}kcal | {summary['total_protein']}g蛋白质\n"
-        text += f"共 {summary['meal_count']} 餐"
+        text += f"共 {summary['meal_count']} 餐\n\n"
+        text += "要继续记录的话，直接告诉我你刚吃了什么～"
+        self._diet_log_sessions[self._diet_session_key(user_id, group_id)] = {
+            "created_at": time.time()
+        }
 
         yield event.plain_result(text)
 
