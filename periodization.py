@@ -41,8 +41,116 @@ CYCLE_TEMPLATES = {
 }
 
 
+PROFILE_CYCLE_TEMPLATES = {
+    "增肌_male": [
+        {"type": "力量", "focus": "推胸肩三头"},
+        {"type": "力量", "focus": "拉背二头"},
+        {"type": "力量", "focus": "下肢力量"},
+        {"type": "有氧", "focus": "低强度有氧"},
+        {"type": "力量", "focus": "胸肩三头"},
+        {"type": "力量", "focus": "背二头"},
+        {"type": "休息", "focus": "休息日"},
+    ],
+    "增肌_female": [
+        {"type": "力量", "focus": "臀腿"},
+        {"type": "力量", "focus": "背肩体态"},
+        {"type": "混合", "focus": "核心有氧"},
+        {"type": "休息", "focus": "休息日"},
+        {"type": "力量", "focus": "臀腿强化"},
+        {"type": "力量", "focus": "上肢塑形"},
+        {"type": "拉伸", "focus": "拉伸恢复"},
+    ],
+    "减脂_male": [
+        {"type": "混合", "focus": "全身循环"},
+        {"type": "有氧", "focus": "中强度有氧"},
+        {"type": "力量", "focus": "推胸肩三头"},
+        {"type": "有氧", "focus": "HIIT"},
+        {"type": "力量", "focus": "下肢力量"},
+        {"type": "混合", "focus": "核心有氧"},
+        {"type": "休息", "focus": "休息日"},
+    ],
+    "减脂_female": [
+        {"type": "力量", "focus": "臀腿"},
+        {"type": "有氧", "focus": "中强度有氧"},
+        {"type": "力量", "focus": "背肩体态"},
+        {"type": "混合", "focus": "核心有氧"},
+        {"type": "力量", "focus": "臀腿强化"},
+        {"type": "有氧", "focus": "低强度有氧"},
+        {"type": "休息", "focus": "休息日"},
+    ],
+    "default_male": [
+        {"type": "力量", "focus": "推胸肩三头"},
+        {"type": "有氧", "focus": "有氧训练"},
+        {"type": "力量", "focus": "拉背二头"},
+        {"type": "拉伸", "focus": "拉伸恢复"},
+        {"type": "力量", "focus": "下肢力量"},
+        {"type": "混合", "focus": "核心有氧"},
+        {"type": "休息", "focus": "休息日"},
+    ],
+    "default_female": [
+        {"type": "力量", "focus": "臀腿"},
+        {"type": "有氧", "focus": "有氧训练"},
+        {"type": "力量", "focus": "背肩体态"},
+        {"type": "拉伸", "focus": "拉伸恢复"},
+        {"type": "混合", "focus": "核心有氧"},
+        {"type": "力量", "focus": "上肢塑形"},
+        {"type": "休息", "focus": "休息日"},
+    ],
+}
+
+
 # 动作模板库：focus area → 器材类别 → 具体动作（"序号.动作名 组数x次数"）
 EXERCISE_TEMPLATES: dict[str, dict[str, str]] = {
+    "推胸肩三头": {
+        "健身房": "1.杠铃卧推 4组x8次 2.坐姿推肩 3组x10次 3.上斜哑铃卧推 3组x10次 4.侧平举 3组x15次 5.绳索下压 3组x12次",
+        "家庭哑铃": "1.哑铃卧推 4组x10次 2.哑铃推肩 3组x10次 3.哑铃飞鸟 3组x12次 4.哑铃侧平举 3组x15次 5.哑铃臂屈伸 3组x12次",
+        "纯徒手": "1.标准俯卧撑 4组x15次 2.宽距俯卧撑 3组x12次 3.倒立撑(靠墙) 3组x8次 4.窄距俯卧撑 3组x12次 5.臂屈伸(椅子) 3组x12次",
+    },
+    "拉背二头": {
+        "健身房": "1.引体向上 4组x8次 2.坐姿划船 4组x10次 3.坐姿下拉 3组x10次 4.杠铃弯举 3组x10次 5.锤式弯举 3组x12次",
+        "家庭哑铃": "1.哑铃划船 4组x10次 2.俯身飞鸟 3组x12次 3.哑铃耸肩 3组x12次 4.哑铃弯举 3组x12次 5.锤式弯举 3组x12次",
+        "纯徒手": "1.反手引体向上 4组x8次 2.桌子反向划船 4组x10次 3.俯卧挺身 3组x15次 4.毛巾弯举 3组x15次 5.超人式 3组x12次",
+    },
+    "胸肩三头": {
+        "健身房": "1.上斜杠铃卧推 4组x8次 2.哑铃推肩 3组x10次 3.龙门架夹胸 3组x12次 4.侧平举 4组x15次 5.绳索下压 3组x12次",
+        "家庭哑铃": "1.上斜哑铃卧推 4组x10次 2.哑铃推肩 3组x10次 3.哑铃飞鸟 3组x12次 4.哑铃侧平举 4组x15次 5.窄距俯卧撑 3组x10次",
+        "纯徒手": "1.宽距俯卧撑 4组x15次 2.倒立撑(靠墙) 3组x8次 3.钻石俯卧撑 3组x10次 4.臂屈伸(椅子) 3组x12次 5.平板支撑 3组x45秒",
+    },
+    "背二头": {
+        "健身房": "1.坐姿下拉 4组x10次 2.杠铃划船 4组x8次 3.坐姿划船 3组x10次 4.杠铃弯举 3组x10次 5.牧师凳弯举 3组x12次",
+        "家庭哑铃": "1.单臂哑铃划船 4组x10次 2.俯身飞鸟 3组x12次 3.哑铃耸肩 3组x12次 4.哑铃弯举 3组x12次 5.锤式弯举 3组x12次",
+        "纯徒手": "1.桌子反向划船 4组x10次 2.俯卧挺身 4组x15次 3.超人式 3组x12次 4.毛巾弯举 3组x15次 5.平板支撑 3组x45秒",
+    },
+    "臀腿": {
+        "健身房": "1.杠铃深蹲 4组x8次 2.臀推 4组x10次 3.罗马尼亚硬拉 3组x10次 4.腿举 3组x12次 5.臀外展 3组x15次",
+        "家庭哑铃": "1.哑铃深蹲 4组x12次 2.哑铃臀桥 4组x12次 3.哑铃罗马尼亚硬拉 3组x10次 4.哑铃箭步蹲 3组x10次 5.侧卧蚌式 3组x15次",
+        "纯徒手": "1.深蹲 4组x20次 2.臀桥 4组x20次 3.保加利亚分腿蹲 3组x10次 4.箭步蹲 3组x12次 5.侧卧蚌式 3组x20次",
+    },
+    "臀腿强化": {
+        "健身房": "1.臀推 4组x8次 2.保加利亚分腿蹲 3组x10次 3.罗马尼亚硬拉 3组x10次 4.腿弯举 3组x12次 5.绳索后踢腿 3组x15次",
+        "家庭哑铃": "1.哑铃臀桥 4组x12次 2.保加利亚分腿蹲 3组x10次 3.哑铃硬拉 3组x10次 4.单腿臀桥 3组x12次 5.提踵 3组x20次",
+        "纯徒手": "1.单腿臀桥 4组x12次 2.保加利亚分腿蹲 3组x10次 3.深蹲跳 3组x12次 4.箭步蹲 3组x12次 5.提踵 3组x25次",
+    },
+    "背肩体态": {
+        "健身房": "1.坐姿划船 4组x10次 2.坐姿下拉 3组x10次 3.面拉 3组x15次 4.哑铃侧平举 3组x15次 5.俯身飞鸟 3组x12次",
+        "家庭哑铃": "1.哑铃划船 4组x10次 2.俯身飞鸟 3组x12次 3.哑铃侧平举 3组x15次 4.哑铃推肩 3组x10次 5.俯卧挺身 3组x15次",
+        "纯徒手": "1.桌子反向划船 4组x10次 2.俯卧挺身 3组x15次 3.YTWL肩胛训练 3组x10次 4.靠墙天使 3组x12次 5.平板支撑 3组x45秒",
+    },
+    "上肢塑形": {
+        "健身房": "1.坐姿推胸 3组x12次 2.坐姿划船 3组x12次 3.哑铃推肩 3组x10次 4.侧平举 3组x15次 5.绳索下压 3组x12次",
+        "家庭哑铃": "1.哑铃卧推 3组x12次 2.哑铃划船 3组x12次 3.哑铃推肩 3组x10次 4.哑铃侧平举 3组x15次 5.哑铃弯举 3组x12次",
+        "纯徒手": "1.标准俯卧撑 3组x12次 2.桌子反向划船 3组x10次 3.窄距俯卧撑 3组x10次 4.俯卧挺身 3组x15次 5.平板支撑 3组x45秒",
+    },
+    "核心有氧": {
+        "健身房": "1.跑步机慢跑 15分钟 2.平板支撑 3组x45秒 3.卷腹 3组x15次 4.登山跑 3组x30秒 5.划船机 8分钟",
+        "家庭哑铃": "1.开合跳 4组x30次 2.平板支撑 3组x45秒 3.卷腹 3组x15次 4.登山跑 3组x30秒 5.哑铃农夫走 3组x40秒",
+        "纯徒手": "1.开合跳 4组x30次 2.平板支撑 3组x45秒 3.卷腹 3组x15次 4.登山跑 3组x30秒 5.死虫 3组x12次",
+    },
+    "全身循环": {
+        "健身房": "1.杠铃深蹲 3组x10次 2.杠铃卧推 3组x10次 3.坐姿划船 3组x10次 4.壶铃摆荡 3组x15次 5.跑步机快走 15分钟",
+        "家庭哑铃": "1.哑铃深蹲 3组x12次 2.哑铃卧推 3组x12次 3.哑铃划船 3组x12次 4.哑铃硬拉 3组x10次 5.开合跳 3组x30次",
+        "纯徒手": "1.深蹲 3组x20次 2.俯卧撑 3组x12次 3.臀桥 3组x20次 4.登山跑 3组x30秒 5.开合跳 3组x30次",
+    },
     # ===== 增肌模板 =====
     "胸/三头": {
         "健身房": "1.杠铃卧推 4组x8次 2.上斜哑铃卧推 3组x10次 3.龙门架夹胸 3组x12次 4.绳索下压 3组x12次 5.仰卧臂屈伸 3组x10次",
@@ -216,6 +324,19 @@ DELOAD_TEMPLATES: dict[str, dict[str, str]] = {
 # 有效器材类别
 EQUIPMENT_CATEGORIES = ("健身房", "家庭哑铃", "纯徒手")
 
+DELOAD_FOCUS_FALLBACKS = {
+    "推胸肩三头": "上肢",
+    "拉背二头": "上肢",
+    "胸肩三头": "胸/三头",
+    "背二头": "背/二头",
+    "臀腿": "下肢力量",
+    "臀腿强化": "下肢力量",
+    "背肩体态": "上肢力量",
+    "上肢塑形": "上肢力量",
+    "核心有氧": "全身力量+有氧",
+    "全身循环": "全身力量+有氧",
+}
+
 
 def _resolve_equipment_category(equipment: str) -> str:
     """将用户的 equipment 字段映射到三个标准类别之一"""
@@ -236,10 +357,53 @@ def _get_workout_detail(focus: str, equipment_category: str, intensity: str) -> 
     找不到模板时返回原始 focus 字符串作为 fallback。
     """
     templates = DELOAD_TEMPLATES if intensity == "low" else EXERCISE_TEMPLATES
-    focus_map = templates.get(focus)
+    fallback_focus = DELOAD_FOCUS_FALLBACKS.get(focus, "") if intensity == "low" else ""
+    focus_map = (
+        templates.get(focus)
+        or (DELOAD_TEMPLATES.get(fallback_focus) if fallback_focus else None)
+        or EXERCISE_TEMPLATES.get(focus)
+    )
     if not focus_map:
         return focus
     return focus_map.get(equipment_category, focus_map.get("纯徒手", focus))
+
+
+def _normalize_goal(goal: str) -> str:
+    if "增肌" in goal:
+        return "增肌"
+    if "减脂" in goal or "减重" in goal or "瘦" in goal:
+        return "减脂"
+    return "default"
+
+
+def _normalize_gender(gender: str) -> str:
+    gender = (gender or "").lower()
+    if gender in ("female", "f", "女") or "女" in gender:
+        return "female"
+    if gender in ("male", "m", "男") or "男" in gender:
+        return "male"
+    return ""
+
+
+def _select_cycle_template(profile) -> list[dict[str, str]]:
+    goal = _normalize_goal(profile.fitness_goal if profile else "")
+    gender = _normalize_gender(profile.gender if profile else "")
+    if gender:
+        template = PROFILE_CYCLE_TEMPLATES.get(f"{goal}_{gender}")
+        if template:
+            return template
+    return CYCLE_TEMPLATES.get(goal, CYCLE_TEMPLATES["default"])
+
+
+def _add_week_guidance(detail: str, week_idx: int, intensity: str) -> str:
+    week_no = week_idx + 1
+    if intensity == "low":
+        tip = "本周去负荷，控制到平时约6成强度。"
+    elif intensity == "high":
+        tip = "主动作在动作标准前提下尝试小幅加重或多1-2次。"
+    else:
+        tip = "先稳定动作质量，保留1-2次余力。"
+    return f"{detail} | 第{week_no}周目标：{tip}"
 
 
 class PeriodizationEngine:
@@ -257,7 +421,7 @@ class PeriodizationEngine:
 
         profile = db.get_profile(user_id, group_id)
         goal = profile.fitness_goal if profile else ""
-        template = CYCLE_TEMPLATES.get(goal, CYCLE_TEMPLATES["default"])
+        template = _select_cycle_template(profile)
         equipment_cat = _resolve_equipment_category(profile.equipment if profile else "")
 
         # 结束现有活跃周期
@@ -299,6 +463,8 @@ class PeriodizationEngine:
                 detail = day_template["focus"] if is_rest else _get_workout_detail(
                     day_template["focus"], equipment_cat, week_intensity
                 )
+                if not is_rest:
+                    detail = _add_week_guidance(detail, week_idx, week_intensity)
                 plan = TrainingPlan(
                     user_id=user_id,
                     group_id=group_id,
@@ -392,8 +558,7 @@ class PeriodizationEngine:
     def generate_deload_week(self, user_id: str, group_id: str) -> list[TrainingPlan]:
         """生成去负荷周计划（全 low 强度）"""
         profile = db.get_profile(user_id, group_id)
-        goal = profile.fitness_goal if profile else ""
-        template = CYCLE_TEMPLATES.get(goal, CYCLE_TEMPLATES["default"])
+        template = _select_cycle_template(profile)
         equipment_cat = _resolve_equipment_category(profile.equipment if profile else "")
 
         start = date.today()

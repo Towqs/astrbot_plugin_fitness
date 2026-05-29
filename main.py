@@ -32,6 +32,7 @@ from .diet import DietLogger
 from .achievement import AchievementSystem, ACHIEVEMENTS
 from .progress import ProgressDetector
 from .periodization import PeriodizationEngine
+from .exercise_guides import format_video_guides, video_guides_for_detail
 from .training_quality import (
     calculate_training_load,
     format_quality_line,
@@ -62,7 +63,7 @@ DIET_LOG_TIMEOUT_SECONDS = 10 * 60  # 10 分钟
     "astrbot_plugin_fitness",
     "FitnessCoach",
     "智能健身教练 v2.0 - 档案/计划/打卡/画像/周期化/成就/饮食/周报/主动回复/私聊建档",
-    "2.0.9",
+    "2.0.11",
     "https://github.com/Towqs/astrbot_plugin_fitness",
 )
 class FitnessCoachPlugin(Star):
@@ -83,6 +84,8 @@ class FitnessCoachPlugin(Star):
         self.lite_provider_id = config.get("lite_provider_id", "")
         self.achievement_enabled = config.get("achievement_enabled", True)
         self.diet_log_enabled = config.get("diet_log_enabled", True)
+        self.video_guide_enabled = config.get("video_guide_enabled", True)
+        self.custom_plan_enabled = config.get("custom_plan_enabled", True)
         self.proactive_reply_enabled = config.get("proactive_reply_enabled", False)
         self.proactive_reply_probability = max(0, min(100, int(config.get("proactive_reply_probability", 5))))
 
@@ -246,6 +249,7 @@ class FitnessCoachPlugin(Star):
             "唤出本菜单：@我 健身帮助\n"
             "基础：健身注册 / 我的档案 / 我的计划 / 今日计划\n"
             "打卡：打卡 / 补卡 / 训练周期\n"
+            "安排：安排今天训练 内容 / 安排本周训练 周一内容 周三内容\n"
             "饮食：饮食记录 /食物内容\n"
             "例如：饮食记录 /烤小排时蔬米饭\n"
             "成就：我的成就\n"
@@ -265,6 +269,85 @@ class FitnessCoachPlugin(Star):
         text = raw.strip()
         text = text.lstrip(" /／:：,，-—")
         return text.strip()
+
+    def _extract_command_text(self, event: AstrMessageEvent, command_names: tuple[str, ...]) -> str:
+        raw = event.message_str.strip() if event.message_str else ""
+        if not raw:
+            return ""
+        for name in command_names:
+            if name in raw:
+                raw = raw.split(name, 1)[1]
+                break
+        return raw.strip().lstrip(" /／:：,，-—").strip()
+
+    def _infer_workout_type(self, detail: str) -> str:
+        text = detail or ""
+        if "休息" in text:
+            return "休息"
+        if any(word in text for word in ("跑", "有氧", "跳绳", "快走", "HIIT", "爬坡")):
+            if any(word in text for word in ("深蹲", "卧推", "硬拉", "划船", "推肩", "训练")):
+                return "混合"
+            return "有氧"
+        if any(word in text for word in ("拉伸", "瑜伽", "放松", "恢复")):
+            return "拉伸"
+        return "力量"
+
+    def _save_manual_plan(self, user_id: str, group_id: str, plan_date: str, detail: str) -> TrainingPlan:
+        detail = detail.strip()
+        workout_type = self._infer_workout_type(detail)
+        is_rest_day = workout_type == "休息"
+        plan = TrainingPlan(
+            user_id=user_id,
+            group_id=group_id,
+            plan_date=plan_date,
+            workout_type=workout_type,
+            workout_detail="休息日" if is_rest_day else detail,
+            intensity="normal",
+            is_rest_day=is_rest_day,
+            adjusted=True,
+            adjust_reason="用户手动安排",
+        )
+        db.save_plan(plan)
+        return plan
+
+    def _format_plan_text(self, plan: TrainingPlan, title: str = "训练计划") -> str:
+        status = "（已调整）" if plan.adjusted else ""
+        text = (
+            f"📝 {title} {status}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"日期: {plan.plan_date}\n"
+            f"类型: {plan.workout_type}\n"
+            f"强度: {plan.intensity}\n"
+            f"内容:\n{plan.workout_detail}\n"
+        )
+        if plan.adjusted:
+            text += f"\n调整原因: {plan.adjust_reason}"
+        if self.video_guide_enabled and not plan.is_rest_day:
+            text += format_video_guides(plan.workout_detail)
+        return text
+
+    def _week_bounds(self) -> tuple[str, str, date]:
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        sunday = monday + timedelta(days=6)
+        return monday.isoformat(), sunday.isoformat(), monday
+
+    def _parse_weekly_plan_items(self, text: str) -> list[tuple[int, str]]:
+        weekday_map = {
+            "一": 0, "二": 1, "三": 2, "四": 3,
+            "五": 4, "六": 5, "日": 6, "天": 6,
+        }
+        pattern = re.compile(
+            r"(?:周|星期)([一二三四五六日天])\s*[:：]?\s*"
+            r"(.*?)(?=(?:周|星期)[一二三四五六日天]\s*[:：]?|$)",
+            re.S,
+        )
+        items = []
+        for match in pattern.finditer(text):
+            detail = re.sub(r"\s+", " ", match.group(2)).strip(" ，,；;")
+            if detail:
+                items.append((weekday_map[match.group(1)], detail))
+        return items
 
     async def _record_diet_text(self, event: AstrMessageEvent, text: str) -> str:
         """根据用户文本估算并记录饮食，返回可直接发送的摘要。"""
@@ -1079,6 +1162,7 @@ class FitnessCoachPlugin(Star):
             "workout_detail": plan.workout_detail, "intensity": plan.intensity,
             "is_rest_day": plan.is_rest_day, "adjusted": plan.adjusted,
             "adjust_reason": plan.adjust_reason,
+            "video_guides": video_guides_for_detail(plan.workout_detail) if self.video_guide_enabled else [],
         }, ensure_ascii=False)
         return result
 
@@ -1861,17 +1945,7 @@ class FitnessCoachPlugin(Star):
             yield event.plain_result("今天还没有训练计划，@我 说'帮我安排今天的训练'我来给你规划～")
             return
 
-        status = "（已调整）" if plan.adjusted else ""
-        text = (
-            f"📝 今日训练计划 {status}\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"类型: {plan.workout_type}\n"
-            f"强度: {plan.intensity}\n"
-            f"内容:\n{plan.workout_detail}\n"
-        )
-        if plan.adjusted:
-            text += f"\n调整原因: {plan.adjust_reason}"
-        yield event.plain_result(text)
+        yield event.plain_result(self._format_plan_text(plan, "今日训练计划"))
 
     @filter.command("我的计划")
     async def cmd_my_plan(self, event: AstrMessageEvent):
@@ -1981,6 +2055,81 @@ class FitnessCoachPlugin(Star):
         }
 
         yield event.plain_result(text)
+
+    @filter.command("安排今天训练")
+    async def cmd_set_today_plan(self, event: AstrMessageEvent):
+        """用户手动安排今天训练"""
+        if not self.custom_plan_enabled:
+            yield event.plain_result("当前未开启用户自定义训练计划。")
+            return
+
+        detail = self._extract_command_text(event, ("安排今天训练",))
+        if not detail:
+            yield event.plain_result("告诉我今天具体练什么就行，例如：安排今天训练 杠铃深蹲4组x8次 罗马尼亚硬拉3组x10次")
+            return
+
+        plan = self._save_manual_plan(
+            event.get_sender_id(), str(event.unified_msg_origin),
+            date.today().isoformat(), detail,
+        )
+        yield event.plain_result("已安排今天训练。\n\n" + self._format_plan_text(plan, "今日训练计划"))
+
+    @filter.command("安排明天训练")
+    async def cmd_set_tomorrow_plan(self, event: AstrMessageEvent):
+        """用户手动安排明天训练"""
+        if not self.custom_plan_enabled:
+            yield event.plain_result("当前未开启用户自定义训练计划。")
+            return
+
+        detail = self._extract_command_text(event, ("安排明天训练",))
+        if not detail:
+            yield event.plain_result("告诉我明天具体练什么就行，例如：安排明天训练 休息 或 安排明天训练 胸肩三头")
+            return
+
+        plan_date = (date.today() + timedelta(days=1)).isoformat()
+        plan = self._save_manual_plan(event.get_sender_id(), str(event.unified_msg_origin), plan_date, detail)
+        yield event.plain_result("已安排明天训练。\n\n" + self._format_plan_text(plan, "明日训练计划"))
+
+    @filter.command("安排本周训练")
+    async def cmd_set_weekly_plan(self, event: AstrMessageEvent):
+        """用户手动安排本周训练"""
+        if not self.custom_plan_enabled:
+            yield event.plain_result("当前未开启用户自定义训练计划。")
+            return
+
+        text = self._extract_command_text(event, ("安排本周训练",))
+        items = self._parse_weekly_plan_items(text)
+        if not items:
+            yield event.plain_result(
+                "按星期写清楚即可，例如：\n"
+                "安排本周训练 周一胸三头 周三背二头 周五臀腿 周日休息"
+            )
+            return
+
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        _, _, monday = self._week_bounds()
+        saved = []
+        for weekday_idx, detail in items:
+            plan_date = (monday + timedelta(days=weekday_idx)).isoformat()
+            plan = self._save_manual_plan(user_id, group_id, plan_date, detail)
+            saved.append(plan)
+
+        lines = ["已安排本周训练："]
+        for plan in saved:
+            day_type = "休息日" if plan.is_rest_day else plan.workout_type
+            lines.append(f"- {plan.plan_date}: {day_type} - {plan.workout_detail}")
+        lines.append("\n发送「今日计划」可以查看动作视频参考。")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("清空本周训练")
+    async def cmd_clear_weekly_plan(self, event: AstrMessageEvent):
+        """用户清空本周训练计划"""
+        user_id = event.get_sender_id()
+        group_id = str(event.unified_msg_origin)
+        start_date, end_date, _ = self._week_bounds()
+        deleted = db.delete_plans_in_range(user_id, group_id, start_date, end_date)
+        yield event.plain_result(f"已清空本周训练计划（{start_date} 至 {end_date}），共删除 {deleted} 条。")
 
     @filter.command("补卡")
     async def cmd_makeup(self, event: AstrMessageEvent):
