@@ -48,6 +48,11 @@ def _parse_enabled_groups(raw) -> set:
     return set()
 
 
+def _extract_qq_group_id(group_origin: str) -> str:
+    parts = str(group_origin).split(":")
+    return parts[-1] if len(parts) >= 3 else str(group_origin)
+
+
 # 建档会话超时时间（秒）
 ONBOARDING_TIMEOUT_SECONDS = 30 * 60  # 30 分钟
 DIET_LOG_TIMEOUT_SECONDS = 10 * 60  # 10 分钟
@@ -128,9 +133,7 @@ class FitnessCoachPlugin(Star):
         """检查当前群是否在白名单中"""
         if not self._enabled_groups:
             return True
-        group_id = str(event.unified_msg_origin)
-        parts = group_id.split(":")
-        qq_group_id = parts[-1] if len(parts) >= 3 else group_id
+        qq_group_id = _extract_qq_group_id(str(event.unified_msg_origin))
         return qq_group_id in self._enabled_groups
 
     def _cleanup_expired_sessions(self) -> None:
@@ -212,6 +215,45 @@ class FitnessCoachPlugin(Star):
             "calories_est": calories,
             "protein_est": protein,
         }
+
+    def _is_at_self(self, event: AstrMessageEvent) -> bool:
+        if hasattr(event.message_obj, "message") and event.message_obj.message:
+            for seg in event.message_obj.message:
+                if hasattr(seg, "type") and seg.type == "at":
+                    qq = str(seg.data.get("qq", ""))
+                    if qq == event.get_self_id():
+                        return True
+        return False
+
+    def _mention_tail_text(self, event: AstrMessageEvent) -> str:
+        text = event.message_str or ""
+        if hasattr(event.message_obj, "message") and event.message_obj.message:
+            for seg in event.message_obj.message:
+                if hasattr(seg, "type") and seg.type == "at":
+                    qq = str(seg.data.get("qq", ""))
+                    if qq == event.get_self_id():
+                        text = text.replace(str(seg), "")
+        return re.sub(r"@\S+", "", text).strip()
+
+    def _is_usage_request(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", "", text or "")
+        return normalized == "健身帮助"
+
+    def _usage_text(self) -> str:
+        return (
+            "🏋️ 智能健身教练用法\n"
+            "━━━━━━━━━━━━━━━\n"
+            "唤出本菜单：@我 健身帮助\n"
+            "基础：健身注册 / 我的档案 / 我的计划 / 今日计划\n"
+            "打卡：打卡 / 补卡 / 训练周期\n"
+            "饮食：饮食记录 /食物内容\n"
+            "例如：饮食记录 /烤小排时蔬米饭\n"
+            "成就：我的成就\n"
+            "管理员：查看档案 @某人 / 查看所有档案\n"
+            "私聊管理员：查看档案 用户QQ 群号 / 查看所有档案 群号\n"
+            "━━━━━━━━━━━━━━━\n"
+            "直接 @我 聊训练、饮食、状态调整也可以。"
+        )
 
     def _extract_diet_text_from_command(self, event: AstrMessageEvent) -> str:
         """提取「饮食记录 xxx」中的饮食描述，兼容命令框架传入剩余参数。"""
@@ -1296,6 +1338,30 @@ class FitnessCoachPlugin(Star):
 
         await event.send(event.plain_result(msg))
 
+    # ==================== 使用说明 ====================
+
+    @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
+    async def on_usage_mention(self, event: AstrMessageEvent):
+        """群内 @ 机器人并发送「健身帮助」时发送用法说明"""
+        if not self._is_group_enabled(event):
+            return
+        if event.get_sender_id() == event.get_self_id():
+            return
+        if not self._is_at_self(event):
+            return
+
+        tail_text = self._mention_tail_text(event)
+        if not self._is_usage_request(tail_text):
+            return
+
+        event.stop_event()
+        await event.send(event.plain_result(self._usage_text()))
+
+    @filter.command("健身帮助")
+    async def cmd_fitness_help(self, event: AstrMessageEvent):
+        """查看智能健身教练插件用法"""
+        yield event.plain_result(self._usage_text())
+
     # ==================== 主动回复 ====================
 
     @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
@@ -1962,10 +2028,73 @@ class FitnessCoachPlugin(Star):
 
     # ==================== 管理员指令 ====================
 
-    async def _is_admin(self, event: AstrMessageEvent) -> bool:
-        """检查发送者是否为群主/管理员"""
+    def _group_origin_from_qq_group_id(self, qq_group_id: str) -> str:
+        """根据纯群号找到数据库中的 group_origin，找不到时构造 aiocqhttp 群 origin。"""
+        qq_group_id = str(qq_group_id)
+        for p in db.get_all_active_profiles():
+            group_origin = str(p.get("group_id", ""))
+            if _extract_qq_group_id(group_origin) == qq_group_id:
+                return group_origin
+        return f"aiocqhttp:GroupMessage:{qq_group_id}"
+
+    def _known_admin_group_ids(self) -> set[str]:
+        groups = set(self._enabled_groups)
+        for p in db.get_all_active_profiles():
+            group_origin = str(p.get("group_id", ""))
+            if group_origin:
+                groups.add(_extract_qq_group_id(group_origin))
+        return {g for g in groups if g}
+
+    def _numbers_from_message(self, event: AstrMessageEvent) -> list[str]:
+        text = event.message_str or ""
+        return re.findall(r"\d{5,}", text)
+
+    def _extract_target_uid(self, event: AstrMessageEvent, group_qq_id: str = "") -> str:
+        """提取被查看用户 QQ。群内优先 @，私聊/文本用数字。"""
+        if hasattr(event.message_obj, "message") and event.message_obj.message:
+            for seg in event.message_obj.message:
+                if hasattr(seg, "type") and seg.type == "at":
+                    qq = str(seg.data.get("qq", ""))
+                    if qq and qq != event.get_self_id():
+                        return qq
+
+        for num in self._numbers_from_message(event):
+            if group_qq_id and num == str(group_qq_id):
+                continue
+            return num
+        return ""
+
+    def _resolve_admin_group_origin(self, event: AstrMessageEvent) -> tuple[str, str]:
+        """解析管理员指令要操作的群，返回 (group_origin, error_msg)。"""
         try:
             group_id = event.get_group_id()
+        except Exception:
+            group_id = ""
+
+        if group_id:
+            return str(event.unified_msg_origin), ""
+
+        known_groups = self._known_admin_group_ids()
+        numbers = self._numbers_from_message(event)
+        for num in numbers:
+            if num in known_groups:
+                return self._group_origin_from_qq_group_id(num), ""
+
+        if len(known_groups) == 1:
+            only_group = next(iter(known_groups))
+            return self._group_origin_from_qq_group_id(only_group), ""
+
+        if not known_groups:
+            return "", "私聊管理员指令需要带群号，例如：查看所有档案 123456"
+        return "", "请在私聊指令中带群号，例如：查看所有档案 123456 或 查看档案 用户QQ 123456"
+
+    async def _is_admin(self, event: AstrMessageEvent, group_origin: str = "") -> bool:
+        """检查发送者是否为指定群的群主/管理员"""
+        try:
+            if group_origin:
+                group_id = _extract_qq_group_id(group_origin)
+            else:
+                group_id = event.get_group_id()
             user_id = event.get_sender_id()
             info = await event.bot.get_group_member_info(
                 group_id=int(group_id), user_id=int(user_id), no_cache=True
@@ -1977,25 +2106,20 @@ class FitnessCoachPlugin(Star):
     @filter.command("查看档案")
     async def cmd_view_profile(self, event: AstrMessageEvent):
         """管理员查看指定用户档案（需要@目标用户）"""
-        if not await self._is_admin(event):
+        group_id, group_error = self._resolve_admin_group_origin(event)
+        if group_error:
+            yield event.plain_result(group_error)
+            return
+        if not await self._is_admin(event, group_id):
             yield event.plain_result("该指令仅群主/管理员可用")
             return
 
-        # 从消息中提取被@的用户
-        target_uid = None
-        if hasattr(event.message_obj, "message") and event.message_obj.message:
-            for seg in event.message_obj.message:
-                if hasattr(seg, "type") and seg.type == "at":
-                    qq = str(seg.data.get("qq", ""))
-                    if qq and qq != event.get_self_id():
-                        target_uid = qq
-                        break
+        target_uid = self._extract_target_uid(event, _extract_qq_group_id(group_id))
 
         if not target_uid:
-            yield event.plain_result("请@要查看的用户，例如：查看档案 @某人")
+            yield event.plain_result("请指定要查看的用户，例如：群内「查看档案 @某人」或私聊「查看档案 用户QQ 群号」")
             return
 
-        group_id = str(event.unified_msg_origin)
         profile = db.get_profile(target_uid, group_id)
         if not profile:
             yield event.plain_result(f"用户 {target_uid} 尚未建立健身档案。")
@@ -2041,11 +2165,14 @@ class FitnessCoachPlugin(Star):
     @filter.command("查看所有档案")
     async def cmd_view_all_profiles(self, event: AstrMessageEvent):
         """管理员查看本群所有已建档用户概览"""
-        if not await self._is_admin(event):
+        group_id, group_error = self._resolve_admin_group_origin(event)
+        if group_error:
+            yield event.plain_result(group_error)
+            return
+        if not await self._is_admin(event, group_id):
             yield event.plain_result("该指令仅群主/管理员可用")
             return
 
-        group_id = str(event.unified_msg_origin)
         profiles = db.get_all_profiles_in_group(group_id)
 
         if not profiles:
