@@ -17,6 +17,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
 from astrbot.api.provider import ProviderRequest
+from astrbot.core.message.components import Share
 from astrbot.core import AstrBotConfig
 from astrbot import logger
 
@@ -249,7 +250,7 @@ class FitnessCoachPlugin(Star):
             "唤出本菜单：@我 健身帮助\n"
             "基础：健身注册 / 我的档案 / 我的计划 / 今日计划\n"
             "打卡：打卡 / 补卡 / 训练周期\n"
-            "安排：安排今天训练 内容 / 安排本周训练 周一内容 周三内容\n"
+            "改计划：直接说“今天想练臀腿”“这周只有周二周四能练”\n"
             "饮食：饮食记录 /食物内容\n"
             "例如：饮食记录 /烤小排时蔬米饭\n"
             "成就：我的成就\n"
@@ -310,7 +311,10 @@ class FitnessCoachPlugin(Star):
         db.save_plan(plan)
         return plan
 
-    def _format_plan_text(self, plan: TrainingPlan, title: str = "训练计划") -> str:
+    def _format_plan_text(
+        self, plan: TrainingPlan, title: str = "训练计划",
+        include_video_links: bool = False,
+    ) -> str:
         status = "（已调整）" if plan.adjusted else ""
         text = (
             f"📝 {title} {status}\n"
@@ -322,9 +326,20 @@ class FitnessCoachPlugin(Star):
         )
         if plan.adjusted:
             text += f"\n调整原因: {plan.adjust_reason}"
-        if self.video_guide_enabled and not plan.is_rest_day:
+        if include_video_links and self.video_guide_enabled and not plan.is_rest_day:
             text += format_video_guides(plan.workout_detail)
         return text
+
+    def _video_share_cards(self, workout_detail: str, max_items: int = 3) -> list[Share]:
+        cards = []
+        for item in video_guides_for_detail(workout_detail, max_items=max_items):
+            cards.append(Share(
+                url=item["url"],
+                title=item["title"],
+                content=item["content"],
+                image="https://www.bilibili.com/favicon.ico",
+            ))
+        return cards
 
     def _week_bounds(self) -> tuple[str, str, date]:
         today = date.today()
@@ -1946,6 +1961,9 @@ class FitnessCoachPlugin(Star):
             return
 
         yield event.plain_result(self._format_plan_text(plan, "今日训练计划"))
+        if self.video_guide_enabled and not plan.is_rest_day:
+            for card in self._video_share_cards(plan.workout_detail):
+                yield event.chain_result([card])
 
     @filter.command("我的计划")
     async def cmd_my_plan(self, event: AstrMessageEvent):
@@ -2073,6 +2091,9 @@ class FitnessCoachPlugin(Star):
             date.today().isoformat(), detail,
         )
         yield event.plain_result("已安排今天训练。\n\n" + self._format_plan_text(plan, "今日训练计划"))
+        if self.video_guide_enabled and not plan.is_rest_day:
+            for card in self._video_share_cards(plan.workout_detail):
+                yield event.chain_result([card])
 
     @filter.command("安排明天训练")
     async def cmd_set_tomorrow_plan(self, event: AstrMessageEvent):
@@ -2089,6 +2110,9 @@ class FitnessCoachPlugin(Star):
         plan_date = (date.today() + timedelta(days=1)).isoformat()
         plan = self._save_manual_plan(event.get_sender_id(), str(event.unified_msg_origin), plan_date, detail)
         yield event.plain_result("已安排明天训练。\n\n" + self._format_plan_text(plan, "明日训练计划"))
+        if self.video_guide_enabled and not plan.is_rest_day:
+            for card in self._video_share_cards(plan.workout_detail):
+                yield event.chain_result([card])
 
     @filter.command("安排本周训练")
     async def cmd_set_weekly_plan(self, event: AstrMessageEvent):

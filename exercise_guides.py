@@ -89,6 +89,8 @@ def video_guides_for_detail(workout_detail: str, max_items: int = 5) -> list[dic
         keyword = ACTION_ALIASES.get(action, f"{action} 动作教学")
         guides.append({
             "action": action,
+            "title": f"{action} 动作教学",
+            "content": "B站视频搜索参考，训练前先看动作要点",
             "url": _bilibili_search_url(keyword),
         })
     return guides
